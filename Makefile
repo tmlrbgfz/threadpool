@@ -18,4 +18,4 @@ tests: StdThreadPoolTest.o stdthreadpool.a
 all: tests
 
 clean:
-	rm -f StdThreadPoolTest.o StdThreadPool.o
+	rm -f StdThreadPoolTest.o StdThreadPool.o tests stdthreadpool.a
