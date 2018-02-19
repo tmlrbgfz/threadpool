@@ -11,19 +11,6 @@
 #include <atomic>
 #include <cmath>
 
-void taskDebug1(bool &retVal, unsigned long &var, unsigned long &count, StdThreadPool &pool) {
-  if(var == 1) {
-    retVal = true;
-  } else if(count == 0) {
-    ++count;
-    auto taskHandle = pool.addTask([&var]()->void{
-      sleep(1);
-      ++var;
-    });
-    StdThreadPool::addDependencyToThisTaskAndReschedule(taskHandle.TaskID);
-  }
-}
-
 //Creates 2^limit tasks
 unsigned char exponentialTaskRecursion(StdThreadPool *ptr, std::atomic_ullong &var, unsigned char limit) {
     ++var;
@@ -151,28 +138,6 @@ SCENARIO("StdThreadPool dependency management tests") {
           REQUIRE(var == 4);
         }
       }
-    }
-    WHEN("running a function adding a function and waiting for it") {
-      unsigned long var = 0;
-      unsigned long count = 0;
-      bool retVal = false;
-      REQUIRE(pool.empty());
-      REQUIRE(pool.getMaxNumThreads() > 1);
-      pool.addTask(std::bind(taskDebug1, std::ref(retVal), std::ref(var), std::ref(count), std::ref(pool)));
-      /*pool.addTask([&]()->void{
-        if(var == 1) {
-          retVal = true;
-        } else if(count == 0) {
-          ++count;
-          auto taskHandle = pool.addTask([&var]()->void{
-            sleep(1);
-            ++var;
-          });
-          StdThreadPool::addDependencyToThisTaskAndReschedule(taskHandle.TaskID);
-        }
-      });*/
-      pool.wait();
-      REQUIRE(retVal == true);
     }
   }
 }
