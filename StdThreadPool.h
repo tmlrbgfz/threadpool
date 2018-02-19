@@ -168,7 +168,6 @@ public:
       std::packaged_task<ReturnType()> packagedTask(task);
       returnValue.future = std::move(packagedTask.get_future());
       CopyIsMove<std::packaged_task<ReturnType()>> packagedTaskWrapper(std::move(packagedTask));
-      //Is it possible to add the packaged task as a unique pointer to the lambda object?
       returnValue.TaskID = this->addTaskDetail([packagedTaskWrapper]()mutable->void{
         (packagedTaskWrapper.getData()());
       }, dependencies);

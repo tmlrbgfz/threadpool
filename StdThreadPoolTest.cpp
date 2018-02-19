@@ -48,6 +48,7 @@ unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool &pool) {
   }
   //Lock the runMutex. This will be used with the condition variable to make
   //all threads wait for all tasks to be assigned.
+  sleep(1);
   runMutex.lock();
   run = true;
   runNotification.notify_all();
