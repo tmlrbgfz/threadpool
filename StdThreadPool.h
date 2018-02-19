@@ -96,7 +96,6 @@ private:
     struct Task {
     	TaskDefinition fn;
     	std::atomic_ulong dependencyCount;
-    	std::atomic_long rescheduleCount;
     	std::vector<TaskID> dependants;
     	std::mutex objMutex;
     	std::condition_variable cv_done;
@@ -185,10 +184,6 @@ public:
     void wait(TaskID id);
     void waitOne();
     bool finished(TaskID id);
-
-    static void rescheduleThisTask();
-    static void addDependencyToThisTaskAndReschedule(const TaskID dependency);
-    static void addDependenciesToThisTaskAndReschedule(const std::set<TaskID> &dependencies);
 
     TaskPackagePtr createTaskPackage();
 };

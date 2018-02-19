@@ -61,26 +61,15 @@ void StdThreadPool::work(void) {
         }
         this->threadWork[threadID] = taskIter;
         task = taskIter->second;
-        if(task->rescheduleCount.load() > 0) {
-        	task->rescheduleCount -= 1;
-        }
         ++(this->numTasksRunning);
         task->fn();
         --(this->numTasksRunning);
-        if(task->rescheduleCount.load() == 0) {
-        	this->removeTask(taskIter->first);
+        this->removeTask(taskIter->first);
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
 #endif
-            std::unique_lock<std::mutex> lock(this->instanceMutex);
-            this->activeTasks.erase(front);
-        } else {
-#ifdef CONGESTION_ANALYSIS
-    tryLockInstanceLock();
-#endif
-            std::unique_lock<std::mutex> lock(this->instanceMutex);
-            this->inactiveTasks.splice(this->inactiveTasks.end(), this->activeTasks, front);
-        }
+        std::unique_lock<std::mutex> lock(this->instanceMutex);
+        this->activeTasks.erase(front);
         task.reset();
         this->threadWork[threadID] = this->taskDefinitions.end();
     }
@@ -280,7 +269,6 @@ StdThreadPool::TaskID StdThreadPool::addTaskDetail(StdThreadPool::TaskDefinition
   std::shared_ptr<Task> t = std::shared_ptr<Task>(new Task);
   t->fn = std::move(task);
   t->dependencyCount.store(0);
-  t->rescheduleCount.store(0);
   t->done = false;
   TaskID id = ++(this->tIdRegistry);
   ++(this->numTasksTotal);
@@ -315,9 +303,7 @@ StdThreadPool::TaskID StdThreadPool::addTaskDetail(StdThreadPool::TaskDefinition
  *    while we examine them.
  * 2. If the (probably longer) list of inactive tasks is not empty, the last
  *    task is select. As the lists are processed sequentially from front to back,
- *    this is the task that will be selected last for execution. Note that currently
- *    active tasks might be rescheduled, thus it may be that there out of the current set of
- *    known tasks, the selected one might not be the last to be processed. Also, other
+ *    this is the task that will be selected last for execution. Note that other
  *    tasks may be inserted after selecting it.
  * 3. If the list of inactive tasks is empty and the list of active tasks is not empty,
  *    the last task of the list of active tasks is selected. Assuming all tasks to
@@ -403,35 +389,6 @@ void StdThreadPool::wait(StdThreadPool::TaskID id) {
 
 bool StdThreadPool::finished(StdThreadPool::TaskID id) {
     return this->getTaskDefinition(id, true) == this->taskDefinitions.end();
-}
-
-void StdThreadPool::rescheduleThisTask() {
-	if(StdThreadPool::threadPoolAssociation() == 0) {
-		return;
-	}
-  ++(StdThreadPool::getOwnTaskIterator()->second->rescheduleCount);
-}
-
-void StdThreadPool::addDependencyToThisTaskAndReschedule(const TaskID dependency) {
-	StdThreadPool *pool = StdThreadPool::threadPoolAssociation();
-	if(pool == 0) {
-		return;
-	}
-	TaskID id = StdThreadPool::getOwnTaskID();
-	std::set<TaskID> dep;
-	dep.insert(dependency);
-	pool->addDependencies(id, dep);
-	StdThreadPool::rescheduleThisTask();
-}
-
-void StdThreadPool::addDependenciesToThisTaskAndReschedule(const std::set<TaskID> &dependencies) {
-	StdThreadPool *pool = StdThreadPool::threadPoolAssociation();
-	if(pool == 0) {
-		return;
-	}
-	TaskID id = StdThreadPool::getOwnTaskID();
-	pool->addDependencies(id, dependencies);
-	StdThreadPool::rescheduleThisTask();
 }
 
 std::shared_ptr<StdThreadPool::TaskPackage> StdThreadPool::createTaskPackage() {
