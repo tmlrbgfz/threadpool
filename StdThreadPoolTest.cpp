@@ -10,6 +10,7 @@
 #include "StdThreadPool.h"
 #include <atomic>
 #include <cmath>
+#include <random>
 
 //Creates 2^limit tasks
 unsigned char exponentialTaskRecursion(StdThreadPool *ptr, std::atomic_ullong &var, unsigned char limit) {
@@ -105,6 +106,20 @@ SCENARIO("StdThreadPool basic tests") {
             THEN("the counter should be increased by the same amount of times") {
               REQUIRE(var.load() == static_cast<unsigned long long>((1.0 - std::pow(2, limit+1))/(1.0 - 2.0)));
             }
+        }
+
+        WHEN("running a task returning an integer") {
+          std::random_device rd;
+          std::mt19937 random_number_engine(rd());
+          std::uniform_int_distribution<int> distribution;
+          unsigned long value = distribution(random_number_engine);
+          auto task = pool.addTask([value]()->int{
+            return value;
+          });
+          pool.wait(task.TaskID);
+          THEN("the integer should be available through the returned future object") {
+            REQUIRE(task.future.get() == value);
+          }
         }
     }
 }
