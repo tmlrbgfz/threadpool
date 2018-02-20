@@ -11,6 +11,8 @@
 #include <atomic>
 #include <cmath>
 #include <random>
+#include <chrono>
+#include <ratio>
 
 //Creates 2^limit tasks
 unsigned char exponentialTaskRecursion(StdThreadPool *ptr, std::atomic_ullong &var, unsigned char limit) {
@@ -34,7 +36,7 @@ unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool &pool) {
   std::atomic_ulong numTasksExecuted;
   numTasksExecuted.store(0);
   bool run = false;
-  unsigned long const numTasksToCreate = pool.getMaxNumThreads() + 1;
+  unsigned long const numTasksToCreate = pool.getNumberOfThreads() + 1;
   for(unsigned long i = 0; i < numTasksToCreate; ++i) {
     pool.addTask([&]()->int {
       std::unique_lock<std::mutex> lock(runMutex);
@@ -70,7 +72,7 @@ SCENARIO("StdThreadPool basic tests") {
           auto numThreadsDetected = detectNumberOfWorkingThreadsLowerBound(pool);
           THEN("the number of thread IDs in the set should be equal to the size of the thread pool") {
             REQUIRE(numThreadsDetected == numThreads);
-            REQUIRE(numThreadsDetected == pool.getMaxNumThreads());
+            REQUIRE(numThreadsDetected == pool.getNumberOfThreads());
             REQUIRE(pool.getNumTasksRunning() == 0);
             REQUIRE(pool.empty());
           }
@@ -152,6 +154,74 @@ SCENARIO("StdThreadPool dependency management tests") {
           REQUIRE(pool.getNumTasks() == 3);
           pool.wait();
           REQUIRE(var == 4);
+        }
+      }
+    }
+  }
+}
+
+SCENARIO("Thread pool size modification tests") {
+  GIVEN("A thread pool") {
+    StdThreadPool pool(1);
+    unsigned int numTasksToCreate = 12;
+    WHEN("Adding tasks") {
+      auto startTime = std::chrono::steady_clock::now();
+      for(unsigned int i = 0; i < numTasksToCreate; ++i) {
+        pool.addTask([&](){
+          sleep(1);
+        });
+      }
+      AND_WHEN("the thread pool has one thread") {
+        THEN("the time needed should be the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate);
+        }
+      }
+      AND_WHEN("the thread pool size is increased to two") {
+        pool.setNumberOfThreads(2);
+        THEN("the time needed should be half the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den < numTasksToCreate);
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/2);
+        }
+      }
+      AND_WHEN("the thread pool size is increased to three") {
+        pool.setNumberOfThreads(3);
+        THEN("the time needed should be one third the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den < numTasksToCreate/2);
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/3);
+        }
+      }
+      AND_WHEN("the thread pool size is increased to four") {
+        pool.setNumberOfThreads(4);
+        THEN("the time needed should be one fourth the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den < numTasksToCreate/3);
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/4);
+        }
+        AND_WHEN("reducing the number of threads to one again after one second") {
+          sleep(1);
+          pool.setNumberOfThreads(1);
+          THEN("The number of joinable threads should be three") {
+            sleep(1);
+            REQUIRE(pool.joinStoppedThreads() == 3);
+            AND_THEN("The time needed should be between two thirds and one third the number of tasks in seconds") {
+              pool.wait();
+              auto endTime = std::chrono::steady_clock::now();
+              std::chrono::nanoseconds duration = endTime - startTime;
+              REQUIRE(duration.count()/std::nano::den <= (numTasksToCreate - numTasksToCreate/3 + 1));
+              REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/3);
+            }
+          }
         }
       }
     }

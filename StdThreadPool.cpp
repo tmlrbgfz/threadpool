@@ -36,10 +36,14 @@ void StdThreadPool::work(void) {
             //  wenn das Prädikat true ist
             //  Jeder Thread wartet also darauf, dass inactiveTasks nicht leer ist oder stop true
             this->workAvailable.wait(lock, [&]() -> bool {
-                return this->inactiveTasks.empty() == false || this->stop == true;
+                return this->inactiveTasks.empty() == false || this->stop == true || this->numThreadsToStop > 0;
             });
+            if(this->numThreadsToStop > 0) {
+                this->numThreadsToStop -= 1;
+                break;
+            }
             if(this->stop == true) {
-                return;
+                break;
             }
             front = this->inactiveTasks.begin();
             this->activeTasks.splice(this->activeTasks.end(),
@@ -73,6 +77,12 @@ void StdThreadPool::work(void) {
         task.reset();
         this->threadWork[threadID] = this->taskDefinitions.end();
     }
+    std::unique_lock<std::mutex> lock(this->instanceMutex);
+    this->joinableThreads.push_back(threadID);
+    this->threadWork.erase(threadID);
+    StdThreadPool::globalMutex.lock();
+    StdThreadPool::threadAssociation.erase(threadID);
+    StdThreadPool::globalMutex.unlock();
 }
 
 StdThreadPool::TaskContainer::iterator StdThreadPool::getTaskDefinition(const TaskID id, bool lockingRequired) {
@@ -190,19 +200,57 @@ StdThreadPool::TaskID StdThreadPool::getOwnTaskID() {
 	return StdThreadPool::getOwnTaskIterator()->first;
 }
 
-/*void StdThreadPool::addThreads(unsigned int n) {
-  this->threads.emplace_back(std::bind(&StdThreadPool::work, this));
-}*/
+void StdThreadPool::setNumberOfThreads(size_type n) {
+    std::unique_lock<std::mutex> lock(this->instanceMutex);
+    if(n < this->maxNumThreads) {
+        this->numThreadsToStop = (this->maxNumThreads - n);
+        this->maxNumThreads = n;
+    }
+    while(n > this->maxNumThreads) {
+        this->threads.emplace_back(std::bind(&StdThreadPool::work, this));
+        ++this->maxNumThreads;
+    }
+}
+
+StdThreadPool::size_type StdThreadPool::getNumberOfThreads() {
+    std::unique_lock<std::mutex> lock(this->instanceMutex);
+    return this->maxNumThreads;
+}
+
+StdThreadPool::size_type StdThreadPool::joinStoppedThreads() {
+    std::list<std::thread> threadList;
+    std::vector<std::list<std::thread>::iterator> listItemsToRemove;
+    listItemsToRemove.reserve(this->threads.size());
+    {
+        std::unique_lock<std::mutex> lock(this->instanceMutex);
+        for(auto iter = this->threads.begin(); iter != this->threads.end(); ++iter) {
+            if(std::any_of(this->joinableThreads.begin(), this->joinableThreads.end(), [&iter](std::thread::id id)->bool{
+                return id == iter->get_id();
+            })) {
+                listItemsToRemove.push_back(iter);
+            }
+        }
+        //Splicing invalidates the iterator in question thus we cannot do this in the loop above
+        for(auto &iter : listItemsToRemove) {
+            threadList.splice(threadList.end(), this->threads, iter);
+        }
+    }
+    for(auto &thread : threadList) {
+        thread.join();
+    }
+    return threadList.size();
+}
 
 StdThreadPool::StdThreadPool() : StdThreadPool(std::thread::hardware_concurrency() - 1) {
 }
 
-StdThreadPool::StdThreadPool(size_type size) {
-    this->stop = false;
-    this->maxNumThreads = size;
-    this->tIdRegistry.store(0);
-    this->numTasksRunning.store(0);
-    this->numTasksTotal.store(0);
+StdThreadPool::StdThreadPool(size_type size) 
+: tIdRegistry(0),
+  numTasksRunning(0),
+  numTasksTotal(0),
+  stop(false),
+  numThreadsToStop(0),
+  maxNumThreads(0) {
 #ifdef CONGESTION_ANALYSIS
     this->instanceLockCongestion.store(0);
     this->instanceLockTries.store(0);
@@ -211,9 +259,7 @@ StdThreadPool::StdThreadPool(size_type size) {
     this->taskDefExLockCongestion.store(0);
     this->taskDefExLockTries.store(0);
 #endif
-    while(size-- > 0) {
-        this->threads.emplace_back(std::bind(&StdThreadPool::work, this));
-    }
+    this->setNumberOfThreads(size);
 }
 
 StdThreadPool::~StdThreadPool() {
@@ -243,10 +289,6 @@ StdThreadPool* StdThreadPool::getDefaultInstancePtr() {
 		StdThreadPool::defaultInstancePtr.reset(new StdThreadPool);
 	}
     return StdThreadPool::defaultInstancePtr.get();
-}
-
-StdThreadPool::size_type StdThreadPool::getMaxNumThreads() const {
-    return this->maxNumThreads;
 }
 
 StdThreadPool::size_type StdThreadPool::getNumTasksRunning() const {

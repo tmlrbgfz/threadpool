@@ -112,7 +112,7 @@ private:
     std::atomic<TaskID> tIdRegistry;
     std::atomic<size_type> numTasksRunning;
     std::atomic<size_type> numTasksTotal;
-    std::vector<std::thread> threads;
+    std::list<std::thread> threads;
     std::mutex instanceMutex;
     std::condition_variable workAvailable;
     TaskList inactiveTasks;
@@ -121,6 +121,9 @@ private:
     TaskContainer taskDefinitions;
     boost::shared_mutex taskDefAccessMutex;
     bool stop;
+    unsigned int numThreadsToStop;
+    std::vector<std::thread::id> joinableThreads;
+    size_type maxNumThreads;
 
 #ifdef CONGESTION_ANALYSIS
     std::atomic_ullong instanceLockCongestion, instanceLockTries;
@@ -131,8 +134,6 @@ private:
     void tryLockTaskDefLockShared() { if(this->taskDefAccessMutex.try_lock_shared() == false) ++taskDefLockCongestion; else this->taskDefAccessMutex.unlock_shared(); ++taskDefLockTries; }
     void tryLockTaskDefLock() { if(this->taskDefAccessMutex.try_lock() == false) ++taskDefExLockCongestion; else this->taskDefAccessMutex.unlock(); ++taskDefExLockTries; }
 #endif
-
-    size_type maxNumThreads;
 
     void work(void);
     TaskContainer::iterator getTaskDefinition(const TaskID id, bool lockingRequired);
@@ -155,7 +156,12 @@ public:
     static StdThreadPool &getDefaultInstance();
     static StdThreadPool *getDefaultInstancePtr();
 
-    size_type getMaxNumThreads() const;
+    void setNumberOfThreads(size_type n);
+    size_type getNumberOfThreads();
+    //Cleanup function joining threads that were stopped to reduce the thread
+    //pool size. Returns the number of joined threads.
+    size_type joinStoppedThreads();
+
     size_type getNumTasksRunning() const;
     size_type getNumTasks() const;
     bool empty();
