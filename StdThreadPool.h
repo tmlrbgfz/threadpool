@@ -95,6 +95,13 @@ private:
     	std::mutex objMutex;
     	std::condition_variable cv_done;
     	bool done;
+
+        void addDependant(TaskID) {}
+        void setNumberOfDependencies(unsigned long) {}
+        unsigned long getNumberOfDependencies() {
+            return 0;
+        }
+        std::vector<TaskID> getDependants() const { return {}; }
     };
 
     template<typename T>
@@ -105,6 +112,17 @@ private:
     	std::mutex objMutex;
     	std::condition_variable cv_done;
     	bool done;
+
+        void addDependant(TaskID id) {
+            this->dependants.push_back(id);
+        }
+        void setNumberOfDependencies(unsigned long n) {
+            this->dependencyCount = n;
+        }
+        unsigned long getNumberOfDependencies() {
+            return this->dependencyCount.load();
+        }
+        std::vector<TaskID> getDependants() const { return dependants; }
     };
     /*template<typename T>
     struct TaskStruct<typename T, typename std::enable_if<!T::respectDependencies>::type> {
@@ -151,7 +169,7 @@ private:
 
     bool checkDependencies(typename TaskContainer::iterator const &task);
     void notifyDependencies(Task const *task);
-    void addDependencies(Task *task, TaskID id, const std::set<TaskID> &dependencies);
+    void addDependencies(Task *task, TaskID id, const std::set<TaskID> *dependencies);
 
     void work(void);
     typename TaskContainer::iterator getTaskDefinition(const TaskID id, bool lockingRequired);
@@ -314,41 +332,47 @@ std::set<typename StdThreadPool<DependencyPolicy>::TaskID> StdThreadPool<Depende
 
 template<class DependencyPolicy>
 bool StdThreadPool<DependencyPolicy>::checkDependencies(typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator const &task) {
-    return task->second->dependencyCount.load() == 0;
+    return task->second->getNumberOfDependencies() == 0;
 }
 
 //TODO: Unused
 template<class DependencyPolicy>
 void StdThreadPool<DependencyPolicy>::notifyDependencies(StdThreadPool<DependencyPolicy>::Task const *task) {
-    for(const StdThreadPool<DependencyPolicy>::TaskID depID : task->dependants) {
-        typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator dep = this->getTaskDefinition(depID, true);
-        //NOTE: Reasoning for assert: The tasks in dependants were added to this pool
-        //          The tasks in dependants can't run before this loop finishes
-        //          Therefore, the tasks must be in the set of task definitions
-        BOOST_ASSERT(dep != this->taskDefinitions.end());
-        dep->second->dependencyCount -= 1;
+    if(DependencyPolicy::respectDependencies) {
+        for(const StdThreadPool<DependencyPolicy>::TaskID depID : task->getDependants()) {
+            typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator dep = this->getTaskDefinition(depID, true);
+            //NOTE: Reasoning for assert: The tasks in dependants were added to this pool
+            //          The tasks in dependants can't run before this loop finishes
+            //          Therefore, the tasks must be in the set of task definitions
+            BOOST_ASSERT(dep != this->taskDefinitions.end());
+            dep->second->setNumberOfDependencies(dep->second->getNumberOfDependencies() - 1);
+        }
     }
 }
 
 template<class DependencyPolicy>
-void StdThreadPool<DependencyPolicy>::addDependencies(StdThreadPool<DependencyPolicy>::Task *task, StdThreadPool<DependencyPolicy>::TaskID id, const std::set<StdThreadPool<DependencyPolicy>::TaskID> &dependencies) {
-    std::set<StdThreadPool<DependencyPolicy>::TaskID>::size_type satisfiedDependencies = 0;
-    //After obtaining this shared lock, all dependencies which are still in the task definition container
-    // will not be removed before the dependencies were added
-#ifdef CONGESTION_ANALYSIS
-        tryLockTaskDefLockShared();
-#endif
-    boost::shared_lock_guard<boost::shared_mutex> tskDefLock(this->taskDefAccessMutex);
-    for(const StdThreadPool<DependencyPolicy>::TaskID dep : dependencies) {
-        typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator dependency = this->getTaskDefinition(dep, false);
-        if(dependency != this->taskDefinitions.end()) {
-            dependency->second->dependants.push_back(id);
-        } else {
-            //Task already finished, reduce dependency count
-            ++satisfiedDependencies;
+void StdThreadPool<DependencyPolicy>::addDependencies(StdThreadPool<DependencyPolicy>::Task *task, StdThreadPool<DependencyPolicy>::TaskID id, const std::set<StdThreadPool<DependencyPolicy>::TaskID> *dependencies) {
+    if(DependencyPolicy::respectDependencies && dependencies != nullptr) {
+        std::set<StdThreadPool<DependencyPolicy>::TaskID>::size_type satisfiedDependencies = 0;
+        //After obtaining this shared lock, all dependencies which are still in the task definition container
+        // will not be removed before the dependencies were added
+    #ifdef CONGESTION_ANALYSIS
+            tryLockTaskDefLockShared();
+    #endif
+        boost::shared_lock_guard<boost::shared_mutex> tskDefLock(this->taskDefAccessMutex);
+        for(const StdThreadPool<DependencyPolicy>::TaskID dep : *dependencies) {
+            typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator dependency = this->getTaskDefinition(dep, false);
+            if(dependency != this->taskDefinitions.end()) {
+                dependency->second->addDependant(id);
+            } else {
+                //Task already finished, reduce dependency count
+                ++satisfiedDependencies;
+            }
         }
+        task->setNumberOfDependencies(dependencies->size() - satisfiedDependencies);
+    } else {
+        task->setNumberOfDependencies(0);
     }
-    task->dependencyCount = dependencies.size() - satisfiedDependencies;
 }
 
 template<class DependencyPolicy>
@@ -464,11 +488,7 @@ typename StdThreadPool<DependencyPolicy>::TaskID StdThreadPool<DependencyPolicy>
     this->taskDefAccessMutex.unlock();
 
     //Add task dependencies
-    if(DependencyPolicy::respectDependencies && dependencies != nullptr) {
-        this->addDependencies(t.get(), id, *dependencies);
-    } else {
-        t->dependencyCount = 0;
-    }
+    this->addDependencies(t.get(), id, dependencies);
 
     //Enqueue in work queue
     #ifdef CONGESTION_ANALYSIS
