@@ -1,4 +1,4 @@
-CXXFLAGS=-std=c++11 -g
+CXXFLAGS=-std=c++11 -g -O0
 LDFLAGS=-pthread -lboost_thread -lboost_system
 CXX=g++
 
@@ -11,7 +11,7 @@ StdThreadPool.o: StdThreadPool.cpp StdThreadPool.h
 stdthreadpool.a: StdThreadPool.o
 	ar q $@ $^
 
-tests: StdThreadPoolTest.o stdthreadpool.a
+tests: StdThreadPoolTest.o
 	$(CXX) -o $@ $(CXXFLAGS) $^ $(LDFLAGS)
 
 .PHONY: all clean

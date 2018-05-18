@@ -8,6 +8,7 @@
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 #include "StdThreadPool.h"
+#include "policies.h"
 #include <atomic>
 #include <cmath>
 #include <random>
@@ -15,12 +16,13 @@
 #include <ratio>
 
 //Creates 2^limit tasks
-unsigned char exponentialTaskRecursion(StdThreadPool *ptr, std::atomic_ullong &var, unsigned char limit) {
+template<typename DependencyPolicy>
+unsigned char exponentialTaskRecursion(StdThreadPool<DependencyPolicy> *ptr, std::atomic_ullong &var, unsigned char limit) {
     ++var;
     if(limit > 0) {
         limit -= 1;
-        ptr->addTask(std::bind(exponentialTaskRecursion, ptr, std::ref(var), limit));
-        ptr->addTask(std::bind(exponentialTaskRecursion, ptr, std::ref(var), limit));
+        ptr->addTask(std::bind(exponentialTaskRecursion<DependencyPolicy>, ptr, std::ref(var), limit));
+        ptr->addTask(std::bind(exponentialTaskRecursion<DependencyPolicy>, ptr, std::ref(var), limit));
     }
     return limit;
 }
@@ -29,7 +31,8 @@ unsigned char exponentialTaskRecursion(StdThreadPool *ptr, std::atomic_ullong &v
 //Threads that are locked up somewhere will not be detected and thus would not contribute to the lower bound.
 //If there are more threads running than the thread pool size, this will be detected.
 //Precondition: pool is empty
-unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool &pool) {
+template<typename DependencyPolicy>
+unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool<DependencyPolicy> &pool) {
   std::set<std::thread::id> threadIDs;
   std::mutex setMutex, runMutex;
   std::condition_variable runNotification;
@@ -66,7 +69,7 @@ unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool &pool) {
 SCENARIO("StdThreadPool basic tests") {
     GIVEN("A thread pool.") {
         unsigned int const numThreads = 10;
-        StdThreadPool pool(numThreads);
+        StdThreadPool<policies::DependenciesRespected> pool(numThreads);
 
         WHEN("running threads inserting their threads ID in a set") {
           auto numThreadsDetected = detectNumberOfWorkingThreadsLowerBound(pool);
@@ -103,7 +106,7 @@ SCENARIO("StdThreadPool basic tests") {
             std::atomic_ullong var;
             unsigned long limit = 15;
             var.store(0);
-            pool.addTask(std::bind(exponentialTaskRecursion, &pool, std::ref(var), limit));
+            pool.addTask(std::bind(exponentialTaskRecursion<policies::DependenciesRespected>, &pool, std::ref(var), limit));
             pool.wait();
             THEN("the counter should be increased by the same amount of times") {
               REQUIRE(var.load() == static_cast<unsigned long long>((1.0 - std::pow(2, limit+1))/(1.0 - 2.0)));
@@ -128,7 +131,7 @@ SCENARIO("StdThreadPool basic tests") {
 
 SCENARIO("StdThreadPool dependency management tests") {
   GIVEN("A thread pool") {
-    auto &pool = StdThreadPool::getDefaultInstance();
+    auto &pool = StdThreadPool<policies::DependenciesRespected>::getDefaultInstance();
     WHEN("running two functions, one depending on the other") {
       unsigned long var = 0;
       auto t1 = pool.addTask([&](){
@@ -144,7 +147,7 @@ SCENARIO("StdThreadPool dependency management tests") {
         REQUIRE(var == 2);
       }
       AND_WHEN("running a third function, depending on both") {
-        std::set<StdThreadPool::TaskID> dependencies;
+        std::set<StdThreadPool<policies::DependenciesRespected>::TaskID> dependencies;
         dependencies.insert(t1.TaskID);
         dependencies.insert(t2.TaskID);
         auto t3 = pool.addTask([&](){
@@ -162,7 +165,7 @@ SCENARIO("StdThreadPool dependency management tests") {
 
 SCENARIO("Thread pool size modification tests") {
   GIVEN("A thread pool") {
-    StdThreadPool pool(1);
+    StdThreadPool<policies::DependenciesRespected> pool(1);
     unsigned int numTasksToCreate = 12;
     WHEN("Adding tasks") {
       auto startTime = std::chrono::steady_clock::now();
