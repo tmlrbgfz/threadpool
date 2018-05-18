@@ -1,4 +1,4 @@
-CXXFLAGS=-std=c++11 -g -O0
+CXXFLAGS=-std=c++11 -g -O0 -DSTDTHREADPOOL_STANDALONE
 LDFLAGS=-pthread -lboost_thread -lboost_system
 CXX=g++
 

@@ -22,10 +22,11 @@
 #include <future>
 #include <type_traits>
 #include <utility>
+#include <functional>
+#ifndef STDTHREADPOOL_STANDALONE
 #include <boost/thread/shared_mutex.hpp>
 #include <boost/thread/shared_lock_guard.hpp>
-#include <boost/thread/lock_guard.hpp>
-#include <boost/optional.hpp>
+#endif
 #include <stdint.h>
 #include "copyismove.h"
 #include "policies.h"
@@ -151,7 +152,11 @@ private:
     TaskList activeTasks;
     std::map<std::thread::id, typename TaskContainer::iterator> threadWork;
     TaskContainer taskDefinitions;
+#ifndef STDTHREADPOOL_STANDALONE
     boost::shared_mutex taskDefAccessMutex;
+#else
+    std::mutex taskDefAccessMutex;
+#endif
     bool stop;
     unsigned int numThreadsToStop;
     std::vector<std::thread::id> joinableThreads;
@@ -344,7 +349,7 @@ void StdThreadPool<DependencyPolicy>::notifyDependencies(StdThreadPool<Dependenc
             //NOTE: Reasoning for assert: The tasks in dependants were added to this pool
             //          The tasks in dependants can't run before this loop finishes
             //          Therefore, the tasks must be in the set of task definitions
-            BOOST_ASSERT(dep != this->taskDefinitions.end());
+            //BOOST_ASSERT(dep != this->taskDefinitions.end());
             dep->second->setNumberOfDependencies(dep->second->getNumberOfDependencies() - 1);
         }
     }
@@ -359,7 +364,11 @@ void StdThreadPool<DependencyPolicy>::addDependencies(StdThreadPool<DependencyPo
     #ifdef CONGESTION_ANALYSIS
             tryLockTaskDefLockShared();
     #endif
+#ifndef STDTHREADPOOL_STANDALONE
         boost::shared_lock_guard<boost::shared_mutex> tskDefLock(this->taskDefAccessMutex);
+#else
+        std::lock_guard<std::mutex> tskDefLock(this->taskDefAccessMutex);
+#endif
         for(const StdThreadPool<DependencyPolicy>::TaskID dep : *dependencies) {
             typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator dependency = this->getTaskDefinition(dep, false);
             if(dependency != this->taskDefinitions.end()) {
@@ -419,7 +428,7 @@ void StdThreadPool<DependencyPolicy>::work(void) {
         }
         //Get task definition
         taskIter = this->getTaskDefinition(*front, true);
-        BOOST_ASSERT(taskIter != this->taskDefinitions.end());
+        //BOOST_ASSERT(taskIter != this->taskDefinitions.end());
         //We made sure that only one thread gets this task, thus we don't need locking for the Task struct
         //If the dependencyCount is greater than zero, this task has unfulfilled dependencies and has to be put back
         if(DependencyPolicy::respectDependencies && checkDependencies(taskIter) == false) {
@@ -462,7 +471,11 @@ typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator StdThreadPool<
         tryLockTaskDefLockShared();
 #endif
         //NOTE: Replace with std::shared_lock as soon as C++17 is state-of-the-art
+#ifndef STDTHREADPOOL_STANDALONE
         boost::shared_lock_guard<boost::shared_mutex> lock(this->taskDefAccessMutex);
+#else
+        std::lock_guard<std::mutex> lock(this->taskDefAccessMutex);
+#endif
         result = this->taskDefinitions.find(id);
     } else {
         result = this->taskDefinitions.find(id);
@@ -558,7 +571,7 @@ template<class DependencyPolicy>
 typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator StdThreadPool<DependencyPolicy>::getOwnTaskIterator() {
     std::thread::id tid = std::this_thread::get_id();
     StdThreadPool<DependencyPolicy> *pool = StdThreadPool<DependencyPolicy>::threadPoolAssociation();
-    BOOST_ASSERT(pool != 0); //TODO: Replace with exception or errx
+    //BOOST_ASSERT(pool != 0); //TODO: Replace with exception or errx
     //No lock required, this tasks thread will not change
     typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator task = pool->threadWork.at(tid);
     /*
@@ -570,7 +583,7 @@ typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator StdThreadPool<
     * The work()-function does not call this function, thus the
     * thread must have a task assigned.
     */
-    BOOST_ASSERT(task != pool->taskDefinitions.end());
+    //BOOST_ASSERT(task != pool->taskDefinitions.end());
     return task;
 }
 
@@ -810,15 +823,27 @@ void StdThreadPool<DependencyPolicy>::wait(TaskID id) {
 #ifdef CONGESTION_ANALYSIS
         tryLockTaskDefLockShared();
 #endif
+#ifndef STDTHREADPOOL_STANDALONE
     this->taskDefAccessMutex.lock_shared();
+#else
+    this->taskDefAccessMutex.lock();
+#endif
     typename StdThreadPool<DependencyPolicy>::TaskContainer::iterator task = this->getTaskDefinition(id, false);
     if(task == this->taskDefinitions.end()) {
+#ifndef STDTHREADPOOL_STANDALONE
         this->taskDefAccessMutex.unlock_shared();
+#else
+        this->taskDefAccessMutex.unlock();
+#endif
         return;
     }
     std::shared_ptr<StdThreadPool<DependencyPolicy>::Task> taskPtr = task->second;
     std::unique_lock<std::mutex> lock(taskPtr->objMutex);
+#ifndef STDTHREADPOOL_STANDALONE
     this->taskDefAccessMutex.unlock_shared();
+#else
+    this->taskDefAccessMutex.unlock();
+#endif
     taskPtr->cv_done.wait(lock, [&]() -> bool { return taskPtr->done; });
 }
 
