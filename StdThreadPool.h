@@ -69,7 +69,7 @@ public:
     	friend class StdThreadPool;
         std::mutex mutex;
         std::deque<TaskID> tasks;
-        StdThreadPool *correspondingPool;
+        StdThreadPool<DependencyPolicy> *correspondingPool;
 
         TaskPackage();
     public:
