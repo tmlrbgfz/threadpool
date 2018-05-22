@@ -1,5 +1,5 @@
 /*
- * StdThreadPoolTest.cpp
+ * ThreadPoolTest.cpp
  *
  *  Created on: Jun 15, 2016
  *      Author: niklas
@@ -7,8 +7,8 @@
 
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
-#include "StdThreadPool.h"
-#include "policies.h"
+#include "ThreadPool.hpp"
+#include "ThreadPoolPolicies.hpp"
 #include <atomic>
 #include <cmath>
 #include <random>
@@ -17,7 +17,7 @@
 
 //Creates 2^limit tasks
 template<typename DependencyPolicy>
-unsigned char exponentialTaskRecursion(StdThreadPool<DependencyPolicy> *ptr, std::atomic_ullong &var, unsigned char limit) {
+unsigned char exponentialTaskRecursion(ThreadPool<DependencyPolicy> *ptr, std::atomic_ullong &var, unsigned char limit) {
     ++var;
     if(limit > 0) {
         limit -= 1;
@@ -32,7 +32,7 @@ unsigned char exponentialTaskRecursion(StdThreadPool<DependencyPolicy> *ptr, std
 //If there are more threads running than the thread pool size, this will be detected.
 //Precondition: pool is empty
 template<typename DependencyPolicy>
-unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool<DependencyPolicy> &pool) {
+unsigned long detectNumberOfWorkingThreadsLowerBound(ThreadPool<DependencyPolicy> &pool) {
   std::set<std::thread::id> threadIDs;
   std::mutex setMutex, runMutex;
   std::condition_variable runNotification;
@@ -66,10 +66,10 @@ unsigned long detectNumberOfWorkingThreadsLowerBound(StdThreadPool<DependencyPol
   return threadIDs.size();
 }
 
-SCENARIO("StdThreadPool basic tests") {
+SCENARIO("ThreadPool basic tests") {
     GIVEN("A thread pool.") {
         unsigned int const numThreads = 10;
-        StdThreadPool<policies::DependenciesRespected> pool(numThreads);
+        ThreadPool<policies::DependenciesRespected> pool(numThreads);
 
         WHEN("running threads inserting their threads ID in a set") {
           auto numThreadsDetected = detectNumberOfWorkingThreadsLowerBound(pool);
@@ -129,9 +129,9 @@ SCENARIO("StdThreadPool basic tests") {
     }
 }
 
-SCENARIO("StdThreadPool dependency management tests") {
+SCENARIO("ThreadPool dependency management tests") {
   GIVEN("A thread pool") {
-    auto &pool = StdThreadPool<policies::DependenciesRespected>::getDefaultInstance();
+    auto &pool = ThreadPool<policies::DependenciesRespected>::getDefaultInstance();
     WHEN("running two functions, one depending on the other") {
       unsigned long var = 0;
       auto t1 = pool.addTask([&](){
@@ -147,7 +147,7 @@ SCENARIO("StdThreadPool dependency management tests") {
         REQUIRE(var == 2);
       }
       AND_WHEN("running a third function, depending on both") {
-        std::set<StdThreadPool<policies::DependenciesRespected>::TaskID> dependencies;
+        std::set<ThreadPool<policies::DependenciesRespected>::TaskID> dependencies;
         dependencies.insert(t1.TaskID);
         dependencies.insert(t2.TaskID);
         auto t3 = pool.addTask([&](){
@@ -165,7 +165,7 @@ SCENARIO("StdThreadPool dependency management tests") {
 
 SCENARIO("Thread pool size modification tests") {
   GIVEN("A thread pool") {
-    StdThreadPool<policies::DependenciesRespected> pool(1);
+    ThreadPool<policies::DependenciesRespected> pool(1);
     unsigned int numTasksToCreate = 12;
     WHEN("Adding tasks") {
       auto startTime = std::chrono::steady_clock::now();
@@ -233,7 +233,7 @@ SCENARIO("Thread pool size modification tests") {
 
 SCENARIO("Performance tests", "[performance]") {
   GIVEN("A big thread pool") {
-    StdThreadPool<policies::DependenciesNotRespected> pool(8);
+    ThreadPool<policies::DependenciesNotRespected> pool(8);
     auto startTime1 = std::chrono::steady_clock::now();
     pool.addTask([]()->unsigned int{
       unsigned int x = 0;
