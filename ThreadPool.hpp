@@ -23,12 +23,12 @@
 #include <type_traits>
 #include <utility>
 #include <functional>
+#include <algorithm>
 #ifndef THREADPOOL_STANDALONE
 #include <boost/thread/shared_mutex.hpp>
 #include <boost/thread/shared_lock_guard.hpp>
 #endif
 #include <stdint.h>
-#include "ThreadPoolCopyIsMoveHelper.hpp"
 #include "ThreadPoolPolicies.hpp"
 
 //#define CONGESTION_ANALYSIS
@@ -74,11 +74,11 @@ public:
         TaskPackage();
     public:
         template<typename T, typename ...Args>
-        ThreadPool<DependencyPolicy>::TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args, const std::set<TaskID> &dependencies);
+        typename ThreadPool<DependencyPolicy>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args);
         template<typename T, typename ...Args>
-        ThreadPool<DependencyPolicy>::TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args, const TaskID dependency);
+        typename ThreadPool<DependencyPolicy>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args);
         template<typename T, typename ...Args>
-        ThreadPool<DependencyPolicy>::TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args);
+        typename ThreadPool<DependencyPolicy>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args);
         //Returns true if the tasks which were in this package when calling this function
         //  are all finished. There might be further tasks which were added while this
         //  function was executed
@@ -209,7 +209,7 @@ public:
     template<typename Fn>
     auto addTask(Fn task, std::set<TaskID> const &dependencies) -> ThreadPool::TaskHandle<typename std::result_of<Fn()>::type>;
     template<typename Fn, typename ...Args>
-    auto addTask(Fn task, Args...args, std::set<TaskID> const &dependencies) -> ThreadPool::TaskHandle<typename std::result_of<Fn(Args...)>::type>;
+    auto addTask(Fn task, std::set<TaskID> const &dependencies, Args...args) -> ThreadPool::TaskHandle<typename std::result_of<Fn(Args...)>::type>;
     template<typename Fn>
     auto addTask(Fn task) -> ThreadPool::TaskHandle<typename std::result_of<Fn()>::type>;
     template<typename Fn, typename ...Args>
@@ -270,7 +270,7 @@ ThreadPool<DependencyPolicy>::TaskPackage::TaskPackage() : correspondingPool(0) 
 
 template<class DependencyPolicy>
 template<typename T, typename ...Args>
-ThreadPool<DependencyPolicy>::TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args, const std::set<TaskID> &dependencies) {
+typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependencies);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -278,7 +278,7 @@ ThreadPool<DependencyPolicy>::TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPa
 
 template<class DependencyPolicy>
 template<typename T, typename ...Args>
-ThreadPool<DependencyPolicy>::TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args, const TaskID dependency) {
+typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependency);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -286,7 +286,7 @@ ThreadPool<DependencyPolicy>::TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPa
 
 template<class DependencyPolicy>
 template<typename T, typename ...Args>
-ThreadPool<DependencyPolicy>::TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args) {
+typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)...);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -718,18 +718,18 @@ auto ThreadPool<DependencyPolicy>::addTask(Fn task, std::set<typename ThreadPool
     -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn()>::type> {
     typedef typename std::result_of<Fn()>::type ReturnType;
     ThreadPool<DependencyPolicy>::TaskHandle<ReturnType> returnValue;
-    std::packaged_task<ReturnType()> packagedTask(task);
-    returnValue.future = std::move(packagedTask.get_future());
-    CopyIsMove<std::packaged_task<ReturnType()>> packagedTaskWrapper(std::move(packagedTask));
-    returnValue.TaskID = this->addTaskDetail([packagedTaskWrapper]()mutable->void{
-    (packagedTaskWrapper.getData()());
+    std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
+    returnValue.future = std::move(packagedTask->get_future());
+    returnValue.TaskID = this->addTaskDetail([packagedTask]()->void{
+        (*packagedTask)();
+        delete packagedTask;
     }, &dependencies);
     return returnValue;
 }
 
 template<class DependencyPolicy>
 template<typename Fn, typename ...Args>
-auto ThreadPool<DependencyPolicy>::addTask(Fn task, Args...args, std::set<ThreadPool<DependencyPolicy>::TaskID> const &dependencies)
+auto ThreadPool<DependencyPolicy>::addTask(Fn task, std::set<ThreadPool<DependencyPolicy>::TaskID> const &dependencies, Args...args)
     -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
     return this->addTask(std::bind(task, std::forward<Args>(args)...), dependencies);
 }
@@ -740,11 +740,11 @@ auto ThreadPool<DependencyPolicy>::addTask(Fn task)
     -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn()>::type> {
     typedef typename std::result_of<Fn()>::type ReturnType;
     ThreadPool<DependencyPolicy>::TaskHandle<ReturnType> returnValue;
-    std::packaged_task<ReturnType()> packagedTask(task);
-    returnValue.future = std::move(packagedTask.get_future());
-    CopyIsMove<std::packaged_task<ReturnType()>> packagedTaskWrapper(std::move(packagedTask));
-    returnValue.TaskID = this->addTaskDetail([packagedTaskWrapper]()mutable->void{
-    (packagedTaskWrapper.getData()());
+    std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
+    returnValue.future = std::move(packagedTask->get_future());
+    returnValue.TaskID = this->addTaskDetail([packagedTask]()->void{
+        (*packagedTask)();
+        delete packagedTask;
     });
     return returnValue;
 }
