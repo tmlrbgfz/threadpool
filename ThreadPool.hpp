@@ -1,5 +1,5 @@
 /*
- * StdThreadPool.h
+ * ThreadPool.hpp
  *
  *  Created on: May 24, 2016
  *      Author: niklas
