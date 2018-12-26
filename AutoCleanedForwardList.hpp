@@ -17,6 +17,11 @@
  */
 
 #include <memory>
+#include <type_traits>
+#include <mutex>
+
+template<class T>
+class AutoCleanedForwardList;
 
 template<class T>
 class AutoCleanedForwardListNode {
@@ -24,7 +29,8 @@ class AutoCleanedForwardListNode {
     std::shared_ptr<AutoCleanedForwardListNode<T>> next;
 public:
     AutoCleanedForwardListNode(T &&data) : element(data) { }
-    AutoCleanedForwardListIterator(AutoCleanedForwardListNode const &other) : element(other.element), next(other.next) { }
+    AutoCleanedForwardListNode(T const &data) : element(data) { }
+    AutoCleanedForwardListNode(AutoCleanedForwardListNode<T> const &other) : element(other.element), next(other.next) { }
 
     T const &data() const {
         return element;
@@ -33,25 +39,36 @@ public:
         return element;
     }
     std::shared_ptr<AutoCleanedForwardListNode<T>> const &getNext() const { return next; }
-    void setNext(std::shared_ptr<AutoCleanedForwardListNode<T> const &node) { this->next = node; }
+    void setNext(std::shared_ptr<AutoCleanedForwardListNode<T>> const &node) { this->next = node; }
 };
 
 template<class T>
+class AutoCleanedForwardListIterator;
+template<class T>
+class AutoCleanedForwardListConstIterator;
+
+template<class T>
 class AutoCleanedForwardListIterator {
-    std::shared_ptr<AutoCleanedForwardListNode<T>> node;
 public:
-    AutoCleanedForwardListIterator(std::shared_ptr<AutoCleanedForwardListNode<T>> &ptr) : node(ptr) { }
-    AutoCleanedForwardListIterator(AutoCleanedForwardListIterator<T> &other) : node(other.node) { }
-    T& operator*() {
+    typedef T value_type;
+private:
+    friend class AutoCleanedForwardList<value_type>;
+    friend class AutoCleanedForwardListConstIterator<T>;
+    std::shared_ptr<AutoCleanedForwardListNode<value_type>> node;
+public:
+    AutoCleanedForwardListIterator(std::shared_ptr<AutoCleanedForwardListNode<value_type>> const &ptr) : node(ptr) { }
+    AutoCleanedForwardListIterator() = default;
+    AutoCleanedForwardListIterator(AutoCleanedForwardListIterator<T> const &other) : node(other.node) { }
+    value_type& operator*() {
         return (this->node->data());
     }
-    T const & operator*() const {
+    value_type const & operator*() const {
         return (this->node->data());
     }
-    T* operator->() {
+    value_type* operator->() {
         return &(this->node->data());
     }
-    T const * operator->() const {
+    value_type const * operator->() const {
         return &(this->node->data());
     }
     AutoCleanedForwardListIterator<T> operator++(int) {
@@ -81,34 +98,109 @@ public:
 };
 
 template<class T>
+class AutoCleanedForwardListConstIterator {
+public:
+    typedef T value_type;
+private:
+    friend class AutoCleanedForwardList<value_type>;
+    std::shared_ptr<AutoCleanedForwardListNode<value_type>> node;
+public:
+    AutoCleanedForwardListConstIterator(std::shared_ptr<AutoCleanedForwardListNode<value_type>> const &ptr) : node(ptr) { }
+    AutoCleanedForwardListConstIterator() = default;
+    AutoCleanedForwardListConstIterator(AutoCleanedForwardListConstIterator<T> const &other) : node(other.node) { }
+    AutoCleanedForwardListConstIterator(AutoCleanedForwardListIterator<T> const &other) : node(other.node) { }
+    T const & operator*() const {
+        return (this->node->data());
+    }
+    T const * operator->() const {
+        return &(this->node->data());
+    }
+    AutoCleanedForwardListConstIterator<T> operator++(int) {
+        *this = AutoCleanedForwardListConstIterator<T>(this->node->getNext());
+        return *this;
+    }
+    AutoCleanedForwardListConstIterator<T> operator++() {
+        auto returnValue = AutoCleanedForwardListConstIterator<T>(*this);
+        *this = AutoCleanedForwardListConstIterator<T>(this->node->getNext());
+        return returnValue;
+    }
+    AutoCleanedForwardListConstIterator<T> operator+(unsigned int offset) const {
+        std::shared_ptr<AutoCleanedForwardListNode<T>> ptr = this->node;
+        while(offset > 0 && ptr != nullptr) {
+            ptr = ptr->getNext();
+            --offset;
+        }
+        return { ptr };
+    }
+
+    bool operator==(AutoCleanedForwardListConstIterator<T> const &other) const {
+        return this->node == other.node;
+    }
+    bool operator!=(AutoCleanedForwardListConstIterator<T> const &other) const {
+        return this->node != other.node;
+    }
+};
+
+template<class T, class U>
+bool operator==(AutoCleanedForwardListIterator<T> &&iter1, AutoCleanedForwardListConstIterator<U> &&iter2) {
+    AutoCleanedForwardListConstIterator<U> casted(iter1);
+    return casted == iter2;
+}
+template<class T, class U>
+bool operator==(AutoCleanedForwardListConstIterator<T> &&iter1, AutoCleanedForwardListIterator<U> &&iter2) {
+    return iter2 == iter1;
+}
+
+template<class T>
 class AutoCleanedForwardList {
     std::shared_ptr<AutoCleanedForwardListNode<T>> last;
 public: //types
     typedef T value_type;
     typedef AutoCleanedForwardListIterator<T> iterator;
-    typedef AutoCleanedForwardListIterator<T const> const_iterator;
+    typedef AutoCleanedForwardListConstIterator<T> const_iterator;
+private:
+    void _M_insert_after(iterator pos, AutoCleanedForwardListNode<T> *newNode) {
+        if(pos != this->end()) {
+            newNode->setNext(pos.node->getNext());
+            pos.node->setNext(std::shared_ptr<AutoCleanedForwardListNode<T>>(newNode));
+            if(pos == this->begin()) {
+                this->last = pos.node->getNext();
+            }
+        } else {
+            if(this->empty()) {
+                this->last = std::shared_ptr<AutoCleanedForwardListNode<T>>(newNode);
+            } else {
+                this->begin().node->setNext(std::shared_ptr<AutoCleanedForwardListNode<T>>(newNode));
+                this->last = pos.node->getNext();
+            }
+        }
+    }
 public:
     AutoCleanedForwardList() = default;
-    ~InifinteForwardList() = default;
+    ~AutoCleanedForwardList() = default;
 
     iterator begin() { return last; }
     const_iterator begin() const { return last; }
-    const_iterator cbegin() { return last; }
+    const_iterator cbegin() const { return last; }
 
-    iterator end() { return AutoCleanedForwardListIterator(nullptr); }
-    const_iterator end() const { return AutoCleanedForwardListIterator(nullptr); }
-    const_iterator cend() const { return AutoCleanedForwardListIterator(nullptr); }
+    iterator end() { return AutoCleanedForwardListIterator<T>(); }
+    const_iterator end() const { return AutoCleanedForwardListIterator<T>(); }
+    const_iterator cend() const { return AutoCleanedForwardListIterator<T>(); }
 
+    bool empty() const { return this->begin() == this->end(); }
 
     void push_back(T &&element) {
-        this->insert_after(this->begin(), std::forward<T>(element));
-        this->last = this->last->getNext();
+        this->insert_after(this->begin(), element);
+    }
+    void push_back(T const &element) {
+        this->insert_after(this->begin(), element);
     }
 
     void insert_after(iterator pos, T &&element) {
-        AutoCleanedForwardListNode<T> *newNode = new AutoCleanedForwardListNode<T>(std::forward<T>(element));
-        newNode->setNext(pos->getNext());
-        pos->setNext(newNode);
+        this->_M_insert_after(pos, new AutoCleanedForwardListNode<T>(element));
+    }
+    void insert_after(iterator pos, T const &element) {
+        this->_M_insert_after(pos, new AutoCleanedForwardListNode<T>(element));
     }
 };
 
