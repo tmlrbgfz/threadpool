@@ -4,6 +4,7 @@ This library intends to provide an easy way of creating a thread pool and
 feeding tasks to it. There are no performance optimizations done yet.
 This library is still work in progress.
 There are no hard dependencies on libraries other than the standard library.
+The Microsoft Guidelines Support Library is recommended.
 C++11 is required. Optional improvements using C++17 will be provided in the future.
 
 ## Features

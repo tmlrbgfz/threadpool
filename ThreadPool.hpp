@@ -51,8 +51,15 @@
 #include <boost/thread/shared_mutex.hpp>
 #include <boost/thread/shared_lock_guard.hpp>
 #endif
+#ifdef THREADPOOL_USE_GSL
+#include <gsl/gsl_assert>
+#else
+#define GSL_LIKELY(x) (!!(x))
+#define Expects(x) static_cast<void>(0)
+#endif
 #include <stdint.h>
 #include "ThreadPoolPolicies.hpp"
+#include "AutoCleanedForwardList.hpp"
 
 //#define CONGESTION_ANALYSIS
 
@@ -171,6 +178,8 @@ private:
     std::list<std::thread> threads;
     std::mutex instanceMutex;
     std::condition_variable workAvailable;
+    std::condition_variable taskDone;
+    AutoCleanedForwardList<TaskID> completedTasks;
     TaskList inactiveTasks;
     TaskList activeTasks;
     std::map<std::thread::id, typename TaskContainer::iterator> threadWork;
@@ -280,7 +289,7 @@ public:
     *    mutex is held.
     */
     void wait(TaskID id);
-    void waitOne();
+    TaskID waitOne();
     bool finished(TaskID id);
 
     TaskPackagePtr createTaskPackage();
@@ -468,6 +477,8 @@ void ThreadPool<DependencyPolicy>::work(void) {
         task->fn();
         --(this->numTasksRunning);
         this->removeTask(taskIter->first);
+        this->completedTasks.push_back(taskIter->first);
+        this->taskDone.notifyAll();
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
 #endif
@@ -871,18 +882,21 @@ void ThreadPool<DependencyPolicy>::wait(TaskID id) {
 }
 
 template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::waitOne() {
+TaskID ThreadPool<DependencyPolicy>::waitOne() {
     if(this->getNumTasksRunning() == 0) {
         return;
     }
-    this->instanceMutex.lock();
+    std::unique_lock<std::mutex> lock(this->instanceMutex);
     if(this->getNumTasksRunning() == 0) {
-        this->instanceMutex.unlock();
         return;
     }
-    ThreadPool<DependencyPolicy>::TaskList::iterator iter = this->activeTasks.begin();
-    this->instanceMutex.unlock();
-    this->wait(*iter);
+    auto lastIter = this->completedTasks.cbegin();
+    this->taskDone.wait(lock, [&lastIter,this]() -> bool { return lastIter != this->completedTasks.cbegin(); });
+    if(GSL_LIKELY(lastIter != nullptr)) {
+        return *(++lastIter);
+    } else {
+        return *this->completedTasks.cbegin();
+    }
 }
 
 template<class DependencyPolicy>
