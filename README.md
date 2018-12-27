@@ -5,7 +5,7 @@ feeding tasks to it. There are no performance optimizations done yet.
 This library is still work in progress.
 There are no hard dependencies on libraries other than the standard library.
 The Microsoft Guidelines Support Library is recommended.
-C++11 is required. Optional improvements using C++17 will be provided in the future.
+C++17 is required.
 
 ## Features
 The following features are provided:

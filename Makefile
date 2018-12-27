@@ -1,15 +1,9 @@
-CXXFLAGS=-std=c++11 -g -O0 -DSTDTHREADPOOL_STANDALONE
+CXXFLAGS=-std=c++17 -g -O0 -DTHREADPOOL_USE_GSL -DSTDTHREADPOOL_STANDALONE
 LDFLAGS=-pthread -lboost_thread -lboost_system
 CXX=g++
 
 ThreadPoolTest.o: ThreadPoolTest.cpp ThreadPool.hpp
 	$(CXX) -c $(CXXFLAGS) $<
-
-ThreadPool.o: ThreadPool.cpp ThreadPool.hpp
-	$(CXX) -c $(CXXFLAGS) $<
-
-threadpool.a: ThreadPool.o
-	ar q $@ $^
 
 tests: ThreadPoolTest.o
 	$(CXX) -o $@ $(CXXFLAGS) $^ $(LDFLAGS)
