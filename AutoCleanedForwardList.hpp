@@ -153,6 +153,7 @@ bool operator==(AutoCleanedForwardListConstIterator<T> &&iter1, AutoCleanedForwa
 
 template<class T>
 class AutoCleanedForwardList {
+    AutoCleanedForwardListNode<T> *first;
     std::shared_ptr<AutoCleanedForwardListNode<T>> last;
 public: //types
     typedef T value_type;
@@ -167,16 +168,12 @@ private:
                 this->last = pos.node->getNext();
             }
         } else {
-            if(this->empty()) {
-                this->last = std::shared_ptr<AutoCleanedForwardListNode<T>>(newNode);
-            } else {
-                this->begin().node->setNext(std::shared_ptr<AutoCleanedForwardListNode<T>>(newNode));
-                this->last = pos.node->getNext();
-            }
+            this->begin().node->setNext(std::shared_ptr<AutoCleanedForwardListNode<T>>(newNode));
+            this->last = pos.node->getNext();
         }
     }
 public:
-    AutoCleanedForwardList() = default;
+    AutoCleanedForwardList(T element) : first(new AutoCleanedForwardListNode<T>(element)), last(first) { }
     ~AutoCleanedForwardList() = default;
 
     iterator begin() { return last; }
@@ -186,8 +183,6 @@ public:
     iterator end() { return AutoCleanedForwardListIterator<T>(); }
     const_iterator end() const { return AutoCleanedForwardListIterator<T>(); }
     const_iterator cend() const { return AutoCleanedForwardListIterator<T>(); }
-
-    bool empty() const { return this->begin() == this->end(); }
 
     void push_back(T &&element) {
         this->insert_after(this->begin(), element);

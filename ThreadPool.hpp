@@ -642,6 +642,7 @@ ThreadPool<DependencyPolicy>::ThreadPool(size_type size)
 : tIdRegistry(0),
 numTasksRunning(0),
 numTasksTotal(0),
+completedTasks(static_cast<uint64_t>(static_cast<int64_t>(-1))),
 stop(false),
 numThreadsToStop(0),
 maxNumThreads(0) {
