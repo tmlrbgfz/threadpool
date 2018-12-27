@@ -120,6 +120,8 @@ public:
         std::set<TaskID> getAsDependency() const;
     };
     typedef std::shared_ptr<TaskPackage> TaskPackagePtr;
+
+    typedef AutoCleanedForwardList<TaskID>::const_iterator Snapshot;
 private:
     template<typename T, typename Enable = void>
     struct TaskStruct {
@@ -296,6 +298,9 @@ public:
     std::optional<TaskID> waitOne();
     bool finished(TaskID id);
 
+    Snapshot getSnapshot() const;
+    std::tuple<std::vector<TaskID>, Snapshot> getCompletedTasksSinceSnapshot(Snapshot const &snapshot) const;
+
     TaskPackagePtr createTaskPackage();
 };
 
@@ -342,6 +347,23 @@ bool ThreadPool<DependencyPolicy>::TaskPackage::finished() {
         allDone &= this->correspondingPool->finished(id);
     }
     return allDone;
+}
+
+template<class DependencyPolicy>
+typename ThreadPool<DependencyPolicy>::Snapshot ThreadPool<DependencyPolicy>::getSnapshot() const {
+    return this->completedTasks.cbegin();
+}
+
+template<class DependencyPolicy>
+std::tuple<std::vector<typename ThreadPool<DependencyPolicy>::TaskID>, typename ThreadPool<DependencyPolicy>::Snapshot>
+ThreadPool<DependencyPolicy>::getCompletedTasksSinceSnapshot(typename ThreadPool<DependencyPolicy>::Snapshot const &snapshot) const {
+    Snapshot newSnapshot = snapshot;
+    std::vector<TaskID> result;
+    while(newSnapshot + 1 != this->completedTasks.cend()) {
+        ++newSnapshot;
+        result.push_back(*newSnapshot);
+    }
+    return std::make_tuple(result, newSnapshot);
 }
 
 template<class DependencyPolicy>
