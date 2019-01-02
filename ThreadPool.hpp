@@ -119,9 +119,6 @@ public:
         void wait();
         void wait(TaskID id);
 
-        decltype(std::declval<ThreadPool<DependencyPolicy>>().getCompletedTasksSinceSnapshot(std::declval<ThreadPool<DependencyPolicy>::Snapshot>()))
-        getCompletedTasksSinceSnapshot(Snapshot const &snapshot) const;
-
         std::set<TaskID> getAsDependency() const;
     };
     typedef std::shared_ptr<TaskPackage> TaskPackagePtr;
@@ -368,20 +365,6 @@ ThreadPool<DependencyPolicy>::getCompletedTasksSinceSnapshot(typename ThreadPool
         result.push_back(*newSnapshot);
     }
     return std::make_tuple(result, newSnapshot);
-}
-
-template<class DependencyPolicy>
-std::tuple<std::vector<typename ThreadPool<DependencyPolicy>::TaskID>, typename ThreadPool<DependencyPolicy>::Snapshot>
-ThreadPool<DependencyPolicy>::TaskPackage::getCompletedTasksSinceSnapshot(Snapshot const &snapshot) const {
-    auto poolResult = this->correspondingPool->getCompletedTasksSinceSnapshot(snapshot);
-    std::vector<TaskID> &unfilteredTasks = std::get<std::vector<TaskID>>(poolResult);
-    auto &packageTasks = this->tasks;
-    std::vector<TaskID> filteredTasks;
-    std::copy_if(unfilteredTasks.cbegin(), unfilteredTasks.cend(), std::back_inserter(filteredTasks), [&packageTasks](TaskID const &id) -> bool {
-        return std::find(packageTasks.cbegin(), packageTasks.cend(), id) != packageTasks.cend();
-    });
-    unfilteredTasks = filteredTasks;
-    return poolResult;
 }
 
 template<class DependencyPolicy>
