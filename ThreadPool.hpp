@@ -316,6 +316,7 @@ typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<Depende
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependencies);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
+    return taskHandle;
 }
 
 template<class DependencyPolicy>
@@ -324,6 +325,7 @@ typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<Depende
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependency);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
+    return taskHandle;
 }
 
 template<class DependencyPolicy>
@@ -332,6 +334,7 @@ typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<Depende
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)...);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
+    return taskHandle;
 }
 
 //Returns true if the tasks which were in this package when calling this function
