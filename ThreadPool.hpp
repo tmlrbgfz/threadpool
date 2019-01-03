@@ -89,8 +89,13 @@ public:
     template<typename T>
     struct TaskHandle_t {
       //TODO: Make const
-      ThreadPool<DependencyPolicy>::TaskID TaskID;
+      ThreadPool<DependencyPolicy>::TaskID const TaskID;
       std::future<T> future;
+      TaskHandle_t(ThreadPool<DependencyPolicy>::TaskID id, std::future<T> &&future) : TaskID(id), future(std::move(future)) { }
+      TaskHandle_t(TaskHandle_t const &) = delete;
+      TaskHandle_t(TaskHandle_t &&) = default;
+      TaskHandle_t &operator=(TaskHandle_t const&) = delete;
+      TaskHandle_t &operator=(TaskHandle_t &&) noexcept = default;
     };
     template<typename T>
     using TaskHandle = struct TaskHandle_t<T>;
@@ -785,14 +790,13 @@ template<typename Fn>
 auto ThreadPool<DependencyPolicy>::addTask(Fn task, std::set<typename ThreadPool<DependencyPolicy>::TaskID> const &dependencies)
     -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn()>::type> {
     typedef typename std::result_of<Fn()>::type ReturnType;
-    ThreadPool<DependencyPolicy>::TaskHandle<ReturnType> returnValue;
     std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
-    returnValue.future = std::move(packagedTask->get_future());
-    returnValue.TaskID = this->addTaskDetail([packagedTask]()->void{
+    auto future = std::move(packagedTask->get_future());
+    auto TaskID = this->addTaskDetail([packagedTask]()->void{
         (*packagedTask)();
         delete packagedTask;
     }, &dependencies);
-    return returnValue;
+    return ThreadPool<DependencyPolicy>::TaskHandle<ReturnType>{TaskID, std::move(future)};
 }
 
 template<class DependencyPolicy>
@@ -807,14 +811,13 @@ template<typename Fn>
 auto ThreadPool<DependencyPolicy>::addTask(Fn task)
     -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn()>::type> {
     typedef typename std::result_of<Fn()>::type ReturnType;
-    ThreadPool<DependencyPolicy>::TaskHandle<ReturnType> returnValue;
     std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
-    returnValue.future = std::move(packagedTask->get_future());
-    returnValue.TaskID = this->addTaskDetail([packagedTask]()->void{
+    auto future = std::move(packagedTask->get_future());
+    auto TaskID = this->addTaskDetail([packagedTask]()->void{
         (*packagedTask)();
         delete packagedTask;
     });
-    return returnValue;
+    return ThreadPool<DependencyPolicy>::TaskHandle<ReturnType>{TaskID, std::move(future)};
 }
 
 template<class DependencyPolicy>
