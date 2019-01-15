@@ -470,6 +470,7 @@ void ThreadPool<DependencyPolicy>::work(void) {
         ThreadPool<DependencyPolicy>::TaskList::iterator front;
         typename ThreadPool<DependencyPolicy>::TaskContainer::iterator taskIter;
         std::shared_ptr<ThreadPool<DependencyPolicy>::Task> task;
+        TaskID taskID;
         {
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
@@ -507,14 +508,15 @@ void ThreadPool<DependencyPolicy>::work(void) {
             continue;
         }
         this->threadWork[threadID] = taskIter;
+        taskID = taskIter->first;
         task = taskIter->second;
         ++(this->numTasksRunning);
         task->fn();
         --(this->numTasksRunning);
-        this->removeTask(taskIter->first);
+        this->removeTask(taskID);
         {
             std::unique_lock<std::mutex> lock(this->completedTasksMutex);
-            this->completedTasks.push_back(taskIter->first);
+            this->completedTasks.push_back(taskID);
         }
         this->taskDone.notify_all();
 #ifdef CONGESTION_ANALYSIS
