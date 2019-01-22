@@ -514,10 +514,6 @@ void ThreadPool<DependencyPolicy>::work(void) {
         task->fn();
         --(this->numTasksRunning);
         this->removeTask(taskID);
-        {
-            std::unique_lock<std::mutex> lock(this->completedTasksMutex);
-            this->completedTasks.push_back(taskID);
-        }
         this->taskDone.notify_all();
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
@@ -596,6 +592,7 @@ void ThreadPool<DependencyPolicy>::removeTask(const ThreadPool<DependencyPolicy>
     if(taskIter == this->taskDefinitions.end()) {
         return;
     }
+    TaskID taskID = taskIter->first;
     std::shared_ptr<ThreadPool<DependencyPolicy>::Task> task = taskIter->second;
 
     //First, remove task from task definition container. This marks the task as finished for
@@ -609,6 +606,10 @@ void ThreadPool<DependencyPolicy>::removeTask(const ThreadPool<DependencyPolicy>
     // or they aquired the task definition lock.
     this->taskDefinitions.erase(taskIter);
     this->taskDefAccessMutex.unlock();
+    {
+        std::unique_lock<std::mutex> lock(this->completedTasksMutex);
+        this->completedTasks.push_back(taskID);
+    }
 
     //From now on, only threads already having a pointer to the object may access it
     task->objMutex.lock();
