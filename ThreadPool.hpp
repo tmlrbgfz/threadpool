@@ -136,6 +136,10 @@ private:
     	std::condition_variable cv_done;
     	bool done;
 
+        ~TaskStruct() {
+            std::unique_lock<std::mutex> lock(this->objMutex);
+        }
+
         void addDependant(TaskID) {}
         void setNumberOfDependencies(unsigned long) {}
         unsigned long getNumberOfDependencies() {
@@ -152,6 +156,10 @@ private:
     	std::mutex objMutex;
     	std::condition_variable cv_done;
     	bool done;
+
+        ~TaskStruct() {
+            std::unique_lock<std::mutex> lock(this->objMutex);
+        }
 
         void addDependant(TaskID id) {
             this->dependants.push_back(id);
@@ -304,8 +312,8 @@ public:
     std::optional<TaskID> waitOne();
     bool finished(TaskID id);
 
-    Snapshot getSnapshot() const;
-    std::tuple<std::vector<TaskID>, Snapshot> getCompletedTasksSinceSnapshot(Snapshot const &snapshot) const;
+    Snapshot getSnapshot();
+    std::tuple<std::vector<TaskID>, Snapshot> getCompletedTasksSinceSnapshot(Snapshot const &snapshot);
 
     TaskPackagePtr createTaskPackage();
 };
@@ -359,15 +367,17 @@ bool ThreadPool<DependencyPolicy>::TaskPackage::finished() {
 }
 
 template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::Snapshot ThreadPool<DependencyPolicy>::getSnapshot() const {
+typename ThreadPool<DependencyPolicy>::Snapshot ThreadPool<DependencyPolicy>::getSnapshot() {
+    std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
     return this->completedTasks.cbegin();
 }
 
 template<class DependencyPolicy>
 std::tuple<std::vector<typename ThreadPool<DependencyPolicy>::TaskID>, typename ThreadPool<DependencyPolicy>::Snapshot>
-ThreadPool<DependencyPolicy>::getCompletedTasksSinceSnapshot(typename ThreadPool<DependencyPolicy>::Snapshot const &snapshot) const {
+ThreadPool<DependencyPolicy>::getCompletedTasksSinceSnapshot(typename ThreadPool<DependencyPolicy>::Snapshot const &snapshot) {
     Snapshot newSnapshot = snapshot;
     std::vector<TaskID> result;
+    std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
     while(newSnapshot + 1 != this->completedTasks.cend()) {
         ++newSnapshot;
         result.push_back(*newSnapshot);
@@ -458,9 +468,10 @@ void ThreadPool<DependencyPolicy>::work(void) {
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
 #endif
-    this->instanceMutex.lock();
-    this->threadWork[threadID] = this->taskDefinitions.end();
-    this->instanceMutex.unlock();
+    {
+        std::unique_lock<std::mutex> lock(this->instanceMutex);
+        this->threadWork[threadID] = this->taskDefinitions.end();
+    }
     if(poolAssociation.expired() == false) {
         ThreadPool<DependencyPolicy>::globalMutex.lock();
         (*(poolAssociation.lock()))[threadID] = this;
@@ -507,7 +518,11 @@ void ThreadPool<DependencyPolicy>::work(void) {
             this->inactiveTasks.splice(this->inactiveTasks.end(), this->activeTasks, front);
             continue;
         }
-        this->threadWork[threadID] = taskIter;
+        {
+            //Lock not necessary (in theory)
+            std::unique_lock<std::mutex> lock(this->instanceMutex);
+            this->threadWork[threadID] = taskIter;
+        }
         taskID = taskIter->first;
         task = taskIter->second;
         ++(this->numTasksRunning);
@@ -700,6 +715,9 @@ ThreadPool<DependencyPolicy>::~ThreadPool() {
     this->stop = true;
     this->instanceMutex.unlock();
     this->workAvailable.notify_all();
+    this->wait();
+    //Wait for all tasks to finish, then join them
+    this->wait();
     for(std::thread &thr : this->threads) {
         thr.join();
     }
@@ -928,13 +946,19 @@ std::optional<typename ThreadPool<DependencyPolicy>::TaskID> ThreadPool<Dependen
     }
     std::unique_lock<std::mutex> lock(this->instanceMutex);
     if(this->getNumTasksRunning() == 0) {
+        std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
         return *this->completedTasks.cbegin();
     }
-    auto lastIter = this->completedTasks.cbegin();
-    this->taskDone.wait(lock, [&lastIter,this]() -> bool { return lastIter != this->completedTasks.cbegin(); });
+    decltype(this->completedTasks.cbegin()) lastIter;
+    {
+        std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
+        lastIter = this->completedTasks.cbegin();
+    }
+    this->taskDone.wait(lock, [&lastIter,this]() -> bool { return lastIter != this->getSnapshot(); });
     if(GSL_LIKELY(lastIter != this->completedTasks.cend())) { //If the list was not empty when lastIter was initialized
         return *(++lastIter);
     } else {
+        std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
         return *this->completedTasks.cbegin();
     }
 }
