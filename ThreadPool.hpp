@@ -75,10 +75,11 @@
  * Example:
  * Start a task doing some computation forever.
  * Start std::numeric_limits<uint64_t>::max()-1 tasks.
- * The next task added is assigned the id still belonging to the task rescheduling itself.
+ * The next task added is assigned the id still belonging to the task started first.
  */
 
-template<class DependencyPolicy = policies::DependenciesNotRespected>
+template<class Policies = policies::PolicyCollection<policies::DependenciesNotRespected,
+                                                     policies::PassiveWaiting>>
 class ThreadPool {
 public:
     typedef std::vector<std::thread>::size_type size_type;
@@ -89,9 +90,9 @@ public:
     template<typename T>
     struct TaskHandle_t {
       //TODO: Make const
-      ThreadPool<DependencyPolicy>::TaskID const TaskID;
+      ThreadPool<Policies>::TaskID const TaskID;
       std::future<T> future;
-      TaskHandle_t(ThreadPool<DependencyPolicy>::TaskID id, std::future<T> &&future) : TaskID(id), future(std::move(future)) { }
+      TaskHandle_t(ThreadPool<Policies>::TaskID id, std::future<T> &&future) : TaskID(id), future(std::move(future)) { }
       TaskHandle_t(TaskHandle_t const &) = delete;
       TaskHandle_t(TaskHandle_t &&) = default;
       TaskHandle_t &operator=(TaskHandle_t const&) = delete;
@@ -107,16 +108,16 @@ public:
     	friend class ThreadPool;
         std::mutex mutex;
         std::deque<TaskID> tasks;
-        ThreadPool<DependencyPolicy> *correspondingPool;
+        ThreadPool<Policies> *correspondingPool;
 
         TaskPackage();
     public:
         template<typename T, typename ...Args>
-        typename ThreadPool<DependencyPolicy>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args);
+        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args);
         template<typename T, typename ...Args>
-        typename ThreadPool<DependencyPolicy>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args);
+        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args);
         template<typename T, typename ...Args>
-        typename ThreadPool<DependencyPolicy>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args);
+        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args);
         //Returns true if the tasks which were in this package when calling this function
         //  are all finished. There might be further tasks which were added while this
         //  function was executed
@@ -180,14 +181,14 @@ private:
     	bool done;
     };*/
 
-    typedef TaskStruct<DependencyPolicy> Task;
+    typedef TaskStruct<Policies> Task;
 private:
-    static std::shared_ptr<std::map<std::thread::id, ThreadPool<DependencyPolicy>*>> threadAssociation;
-    static std::unique_ptr<ThreadPool<DependencyPolicy>> defaultInstancePtr;
+    static std::shared_ptr<std::map<std::thread::id, ThreadPool<Policies>*>> threadAssociation;
+    static std::unique_ptr<ThreadPool<Policies>> defaultInstancePtr;
     static std::mutex globalMutex;
 
     typedef std::list<TaskID> TaskList;
-    typedef std::map<TaskID, std::shared_ptr<ThreadPool<DependencyPolicy>::Task>> TaskContainer;
+    typedef std::map<TaskID, std::shared_ptr<ThreadPool<Policies>::Task>> TaskContainer;
 
     std::atomic<TaskID> tIdRegistry;
     std::atomic<size_type> numTasksRunning;
@@ -236,7 +237,7 @@ private:
 
     TaskID findNextUnusedTaskId(TaskID id) const;
 
-    static ThreadPool<DependencyPolicy> *threadPoolAssociation();
+    static ThreadPool<Policies> *threadPoolAssociation();
     static typename TaskContainer::iterator getOwnTaskIterator();
     static TaskID getOwnTaskID();
 
@@ -248,8 +249,8 @@ public:
     ThreadPool(const ThreadPool &/*other*/) = delete;
     ~ThreadPool();
 
-    static ThreadPool<DependencyPolicy>& getDefaultInstance();
-    static ThreadPool<DependencyPolicy>* getDefaultInstancePtr();
+    static ThreadPool<Policies>& getDefaultInstance();
+    static ThreadPool<Policies>* getDefaultInstancePtr();
 
     void setNumberOfThreads(size_type n);
     size_type getNumberOfThreads();
@@ -322,31 +323,31 @@ public:
 };
 
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>::TaskPackage::TaskPackage() : correspondingPool(0) {
+template<class Policies>
+ThreadPool<Policies>::TaskPackage::TaskPackage() : correspondingPool(0) {
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename T, typename ...Args>
-typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args) {
+typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependencies);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
     return taskHandle;
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename T, typename ...Args>
-typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args) {
+typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependency);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
     return taskHandle;
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename T, typename ...Args>
-typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<DependencyPolicy>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args) {
+typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)...);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -356,28 +357,28 @@ typename ThreadPool<DependencyPolicy>::template TaskHandle<T> ThreadPool<Depende
 //Returns true if the tasks which were in this package when calling this function
 //  are all finished. There might be further tasks which were added while this
 //  function was executed
-template<class DependencyPolicy>
-bool ThreadPool<DependencyPolicy>::TaskPackage::finished() {
-    std::deque<ThreadPool<DependencyPolicy>::TaskID> ids;
+template<class Policies>
+bool ThreadPool<Policies>::TaskPackage::finished() {
+    std::deque<ThreadPool<Policies>::TaskID> ids;
     bool allDone = true;
     this->mutex.lock();
     ids = this->tasks;
     this->mutex.unlock();
-    for(const ThreadPool<DependencyPolicy>::TaskID id : ids) {
+    for(const ThreadPool<Policies>::TaskID id : ids) {
         allDone &= this->correspondingPool->finished(id);
     }
     return allDone;
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::Snapshot ThreadPool<DependencyPolicy>::getSnapshot() {
+template<class Policies>
+typename ThreadPool<Policies>::Snapshot ThreadPool<Policies>::getSnapshot() {
     std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
     return this->completedTasks.cbegin();
 }
 
-template<class DependencyPolicy>
-std::tuple<std::vector<typename ThreadPool<DependencyPolicy>::TaskID>, typename ThreadPool<DependencyPolicy>::Snapshot>
-ThreadPool<DependencyPolicy>::getCompletedTasksSinceSnapshot(typename ThreadPool<DependencyPolicy>::Snapshot const &snapshot) {
+template<class Policies>
+std::tuple<std::vector<typename ThreadPool<Policies>::TaskID>, typename ThreadPool<Policies>::Snapshot>
+ThreadPool<Policies>::getCompletedTasksSinceSnapshot(typename ThreadPool<Policies>::Snapshot const &snapshot) {
     Snapshot newSnapshot = snapshot;
     std::vector<TaskID> result;
     std::unique_lock<std::mutex> completedTasksLock(this->completedTasksMutex);
@@ -388,8 +389,8 @@ ThreadPool<DependencyPolicy>::getCompletedTasksSinceSnapshot(typename ThreadPool
     return std::make_tuple(result, newSnapshot);
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::TaskPackage::wait() {
+template<class Policies>
+void ThreadPool<Policies>::TaskPackage::wait() {
     while(this->tasks.empty() == false) {
         TaskID id;
         this->mutex.lock();
@@ -406,27 +407,27 @@ void ThreadPool<DependencyPolicy>::TaskPackage::wait() {
     }
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::TaskPackage::wait(TaskID id) {
+template<class Policies>
+void ThreadPool<Policies>::TaskPackage::wait(TaskID id) {
     this->correspondingPool->wait(id);
 }
 
-template<class DependencyPolicy>
-std::set<typename ThreadPool<DependencyPolicy>::TaskID> ThreadPool<DependencyPolicy>::TaskPackage::getAsDependency() const {
+template<class Policies>
+std::set<typename ThreadPool<Policies>::TaskID> ThreadPool<Policies>::TaskPackage::getAsDependency() const {
     return std::set<TaskID>(tasks.begin(), tasks.end());
 }
 
-template<class DependencyPolicy>
-bool ThreadPool<DependencyPolicy>::checkDependencies(typename ThreadPool<DependencyPolicy>::TaskContainer::iterator const &task) {
+template<class Policies>
+bool ThreadPool<Policies>::checkDependencies(typename ThreadPool<Policies>::TaskContainer::iterator const &task) {
     return task->second->getNumberOfDependencies() == 0;
 }
 
 //TODO: Unused
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::notifyDependencies(ThreadPool<DependencyPolicy>::Task const *task) {
-    if(DependencyPolicy::respectDependencies) {
-        for(const ThreadPool<DependencyPolicy>::TaskID depID : task->getDependants()) {
-            typename ThreadPool<DependencyPolicy>::TaskContainer::iterator dep = this->getTaskDefinition(depID, true);
+template<class Policies>
+void ThreadPool<Policies>::notifyDependencies(ThreadPool<Policies>::Task const *task) {
+    if(Policies::respectDependencies) {
+        for(const ThreadPool<Policies>::TaskID depID : task->getDependants()) {
+            typename ThreadPool<Policies>::TaskContainer::iterator dep = this->getTaskDefinition(depID, true);
             //NOTE: Reasoning for assert: The tasks in dependants were added to this pool
             //          The tasks in dependants can't run before this loop finishes
             //          Therefore, the tasks must be in the set of task definitions
@@ -436,10 +437,10 @@ void ThreadPool<DependencyPolicy>::notifyDependencies(ThreadPool<DependencyPolic
     }
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::addDependencies(ThreadPool<DependencyPolicy>::Task *task, ThreadPool<DependencyPolicy>::TaskID id, const std::set<ThreadPool<DependencyPolicy>::TaskID> *dependencies) {
-    if(DependencyPolicy::respectDependencies && dependencies != nullptr) {
-        std::set<ThreadPool<DependencyPolicy>::TaskID>::size_type satisfiedDependencies = 0;
+template<class Policies>
+void ThreadPool<Policies>::addDependencies(ThreadPool<Policies>::Task *task, ThreadPool<Policies>::TaskID id, const std::set<ThreadPool<Policies>::TaskID> *dependencies) {
+    if(Policies::respectDependencies && dependencies != nullptr) {
+        std::set<ThreadPool<Policies>::TaskID>::size_type satisfiedDependencies = 0;
         //After obtaining this shared lock, all dependencies which are still in the task definition container
         // will not be removed before the dependencies were added
     #ifdef CONGESTION_ANALYSIS
@@ -450,8 +451,8 @@ void ThreadPool<DependencyPolicy>::addDependencies(ThreadPool<DependencyPolicy>:
 #else
         std::lock_guard<std::mutex> tskDefLock(this->taskDefAccessMutex);
 #endif
-        for(const ThreadPool<DependencyPolicy>::TaskID dep : *dependencies) {
-            typename ThreadPool<DependencyPolicy>::TaskContainer::iterator dependency = this->getTaskDefinition(dep, false);
+        for(const ThreadPool<Policies>::TaskID dep : *dependencies) {
+            typename ThreadPool<Policies>::TaskContainer::iterator dependency = this->getTaskDefinition(dep, false);
             if(dependency != this->taskDefinitions.end()) {
                 dependency->second->addDependant(id);
             } else {
@@ -465,11 +466,11 @@ void ThreadPool<DependencyPolicy>::addDependencies(ThreadPool<DependencyPolicy>:
     }
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::work(void) {
+template<class Policies>
+void ThreadPool<Policies>::work(void) {
     //Setup
     std::thread::id threadID = std::this_thread::get_id();
-    std::weak_ptr<std::map<std::thread::id, ThreadPool<DependencyPolicy>*>> poolAssociation = ThreadPool<DependencyPolicy>::threadAssociation;
+    std::weak_ptr<std::map<std::thread::id, ThreadPool<Policies>*>> poolAssociation = ThreadPool<Policies>::threadAssociation;
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
 #endif
@@ -478,7 +479,7 @@ void ThreadPool<DependencyPolicy>::work(void) {
         this->threadWork[threadID] = this->taskDefinitions.end();
     }
     if(poolAssociation.expired() == false) {
-        std::unique_lock<std::mutex> lock(ThreadPool<DependencyPolicy>::globalMutex);
+        std::unique_lock<std::mutex> lock(ThreadPool<Policies>::globalMutex);
         (*(poolAssociation.lock()))[threadID] = this;
     }
     bool continueWorking = true;
@@ -506,17 +507,17 @@ void ThreadPool<DependencyPolicy>::work(void) {
     this->joinableThreads.push_back(threadID);
     this->threadWork.erase(threadID);
     if(poolAssociation.expired() == false) {
-        std::unique_lock<std::mutex> lock(ThreadPool<DependencyPolicy>::globalMutex);
+        std::unique_lock<std::mutex> lock(ThreadPool<Policies>::globalMutex);
         poolAssociation.lock()->erase(threadID);
     }
 }
 
-template<class DependencyPolicy>
-bool ThreadPool<DependencyPolicy>::workOnce(void) {
+template<class Policies>
+bool ThreadPool<Policies>::workOnce(void) {
     std::thread::id threadID = std::this_thread::get_id();
-    ThreadPool<DependencyPolicy>::TaskList::iterator front;
-    typename ThreadPool<DependencyPolicy>::TaskContainer::iterator taskIter;
-    std::shared_ptr<ThreadPool<DependencyPolicy>::Task> task;
+    ThreadPool<Policies>::TaskList::iterator front;
+    typename ThreadPool<Policies>::TaskContainer::iterator taskIter;
+    std::shared_ptr<ThreadPool<Policies>::Task> task;
     TaskID taskID;
     {
 #ifdef CONGESTION_ANALYSIS
@@ -536,7 +537,7 @@ bool ThreadPool<DependencyPolicy>::workOnce(void) {
     //BOOST_ASSERT(taskIter != this->taskDefinitions.end());
     //We made sure that only one thread gets this task, thus we don't need locking for the Task struct
     //If the dependencyCount is greater than zero, this task has unfulfilled dependencies and has to be put back
-    if(DependencyPolicy::respectDependencies && checkDependencies(taskIter) == false) {
+    if(Policies::respectDependencies && checkDependencies(taskIter) == false) {
 #ifdef CONGESTION_ANALYSIS
 tryLockInstanceLock();
 #endif
@@ -566,9 +567,9 @@ tryLockInstanceLock();
     return true;
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::TaskContainer::iterator ThreadPool<DependencyPolicy>::getTaskDefinition(const ThreadPool<DependencyPolicy>::TaskID id, bool lockingRequired) {
-    typename ThreadPool<DependencyPolicy>::TaskContainer::iterator result;
+template<class Policies>
+typename ThreadPool<Policies>::TaskContainer::iterator ThreadPool<Policies>::getTaskDefinition(const ThreadPool<Policies>::TaskID id, bool lockingRequired) {
+    typename ThreadPool<Policies>::TaskContainer::iterator result;
     if(lockingRequired) {
 #ifdef CONGESTION_ANALYSIS
         tryLockTaskDefLockShared();
@@ -586,10 +587,10 @@ typename ThreadPool<DependencyPolicy>::TaskContainer::iterator ThreadPool<Depend
     return result;
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::TaskID ThreadPool<DependencyPolicy>::addTaskDetail(typename ThreadPool<DependencyPolicy>::TaskDefinition&& task,
-                                                                                        const std::set<typename ThreadPool<DependencyPolicy>::TaskID> *dependencies) {
-    std::shared_ptr<typename ThreadPool<DependencyPolicy>::Task> t = std::shared_ptr<typename ThreadPool<DependencyPolicy>::Task>(new typename ThreadPool<DependencyPolicy>::Task);
+template<class Policies>
+typename ThreadPool<Policies>::TaskID ThreadPool<Policies>::addTaskDetail(typename ThreadPool<Policies>::TaskDefinition&& task,
+                                                                                        const std::set<typename ThreadPool<Policies>::TaskID> *dependencies) {
+    std::shared_ptr<typename ThreadPool<Policies>::Task> t = std::shared_ptr<typename ThreadPool<Policies>::Task>(new typename ThreadPool<Policies>::Task);
     t->fn = std::move(task);
     t->done = false;
     TaskID id = ++(this->tIdRegistry);
@@ -619,14 +620,14 @@ typename ThreadPool<DependencyPolicy>::TaskID ThreadPool<DependencyPolicy>::addT
     return id;
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::removeTask(const ThreadPool<DependencyPolicy>::TaskID id) {
-    typename ThreadPool<DependencyPolicy>::TaskContainer::iterator taskIter = this->getTaskDefinition(id, true);
+template<class Policies>
+void ThreadPool<Policies>::removeTask(const ThreadPool<Policies>::TaskID id) {
+    typename ThreadPool<Policies>::TaskContainer::iterator taskIter = this->getTaskDefinition(id, true);
     if(taskIter == this->taskDefinitions.end()) {
         return;
     }
     TaskID taskID = taskIter->first;
-    std::shared_ptr<ThreadPool<DependencyPolicy>::Task> task = taskIter->second;
+    std::shared_ptr<ThreadPool<Policies>::Task> task = taskIter->second;
 
     //First, remove task from task definition container. This marks the task as finished for
     // all threads which try to obtain it's definition afterwards.
@@ -653,36 +654,36 @@ void ThreadPool<DependencyPolicy>::removeTask(const ThreadPool<DependencyPolicy>
     task->cv_done.notify_all();
 
     //Now, notify all dependencies
-    if(DependencyPolicy::respectDependencies) {
+    if(Policies::respectDependencies) {
         this->notifyDependencies(task.get());
     }
     --(this->numTasksTotal);
 }
 
-/*TODO: template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>::TaskID ThreadPool<DependencyPolicy>::findNextUnusedTaskId(TaskID id) const;*/
+/*TODO: template<class Policies>
+ThreadPool<Policies>::TaskID ThreadPool<Policies>::findNextUnusedTaskId(TaskID id) const;*/
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy> *ThreadPool<DependencyPolicy>::threadPoolAssociation() {
+template<class Policies>
+ThreadPool<Policies> *ThreadPool<Policies>::threadPoolAssociation() {
     std::thread::id tid = std::this_thread::get_id();
-    ThreadPool<DependencyPolicy> *pool = nullptr;
+    ThreadPool<Policies> *pool = nullptr;
     {
-        std::unique_lock<std::mutex> lock(ThreadPool<DependencyPolicy>::globalMutex);
-        typename std::map<std::thread::id, ThreadPool<DependencyPolicy>*>::iterator thread = ThreadPool<DependencyPolicy>::threadAssociation->find(tid);
-        if(thread != ThreadPool<DependencyPolicy>::threadAssociation->end()) {
+        std::unique_lock<std::mutex> lock(ThreadPool<Policies>::globalMutex);
+        typename std::map<std::thread::id, ThreadPool<Policies>*>::iterator thread = ThreadPool<Policies>::threadAssociation->find(tid);
+        if(thread != ThreadPool<Policies>::threadAssociation->end()) {
             pool = thread->second;
         }
     }
     return pool;
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::TaskContainer::iterator ThreadPool<DependencyPolicy>::getOwnTaskIterator() {
+template<class Policies>
+typename ThreadPool<Policies>::TaskContainer::iterator ThreadPool<Policies>::getOwnTaskIterator() {
     std::thread::id tid = std::this_thread::get_id();
-    ThreadPool<DependencyPolicy> *pool = ThreadPool<DependencyPolicy>::threadPoolAssociation();
+    ThreadPool<Policies> *pool = ThreadPool<Policies>::threadPoolAssociation();
     Expects(pool != nullptr);
     //No lock required, this tasks thread will not change
-    typename ThreadPool<DependencyPolicy>::TaskContainer::iterator task = pool->threadWork.at(tid);
+    typename ThreadPool<Policies>::TaskContainer::iterator task = pool->threadWork.at(tid);
     /*
     * Rationale:
     * EITHER the calling thread is not part of any thread pool.
@@ -696,22 +697,22 @@ typename ThreadPool<DependencyPolicy>::TaskContainer::iterator ThreadPool<Depend
     return task;
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::TaskID ThreadPool<DependencyPolicy>::getOwnTaskID() {
-    return ThreadPool<DependencyPolicy>::getOwnTaskIterator()->first;
+template<class Policies>
+typename ThreadPool<Policies>::TaskID ThreadPool<Policies>::getOwnTaskID() {
+    return ThreadPool<Policies>::getOwnTaskIterator()->first;
 }
 
-template<class DependencyPolicy>
-bool ThreadPool<DependencyPolicy>::callingThreadBelongsToPool() const {
-    return ThreadPool<DependencyPolicy>::threadPoolAssociation() == this;
+template<class Policies>
+bool ThreadPool<Policies>::callingThreadBelongsToPool() const {
+    return ThreadPool<Policies>::threadPoolAssociation() == this;
 }
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>::ThreadPool() : ThreadPool(std::thread::hardware_concurrency() - 1) {
+template<class Policies>
+ThreadPool<Policies>::ThreadPool() : ThreadPool(std::thread::hardware_concurrency() - 1) {
 }
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>::ThreadPool(size_type size) 
+template<class Policies>
+ThreadPool<Policies>::ThreadPool(size_type size) 
 : tIdRegistry(0),
 numTasksRunning(0),
 numTasksTotal(0),
@@ -730,8 +731,8 @@ maxNumThreads(0) {
     this->setNumberOfThreads(size);
 }
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>::~ThreadPool() {
+template<class Policies>
+ThreadPool<Policies>::~ThreadPool() {
 #ifdef CONGESTION_ANALYSIS
     tryLockInstanceLock();
 #endif
@@ -751,42 +752,42 @@ ThreadPool<DependencyPolicy>::~ThreadPool() {
 #endif
 }
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>& ThreadPool<DependencyPolicy>::getDefaultInstance() {
-    return *ThreadPool<DependencyPolicy>::getDefaultInstancePtr();
+template<class Policies>
+ThreadPool<Policies>& ThreadPool<Policies>::getDefaultInstance() {
+    return *ThreadPool<Policies>::getDefaultInstancePtr();
 }
 
-template<class DependencyPolicy>
-ThreadPool<DependencyPolicy>* ThreadPool<DependencyPolicy>::getDefaultInstancePtr() {
-    if(ThreadPool<DependencyPolicy>::defaultInstancePtr.get() == nullptr) {
-        ThreadPool<DependencyPolicy>::defaultInstancePtr.reset(new ThreadPool<DependencyPolicy>);
+template<class Policies>
+ThreadPool<Policies>* ThreadPool<Policies>::getDefaultInstancePtr() {
+    if(ThreadPool<Policies>::defaultInstancePtr.get() == nullptr) {
+        ThreadPool<Policies>::defaultInstancePtr.reset(new ThreadPool<Policies>);
     }
-    return ThreadPool<DependencyPolicy>::defaultInstancePtr.get();
+    return ThreadPool<Policies>::defaultInstancePtr.get();
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::setNumberOfThreads(size_type n) {
+template<class Policies>
+void ThreadPool<Policies>::setNumberOfThreads(size_type n) {
     std::unique_lock<std::mutex> lock(this->instanceMutex);
     if(n < this->maxNumThreads) {
         this->numThreadsToStop = (this->maxNumThreads - n);
         this->maxNumThreads = n;
     }
     while(n > this->maxNumThreads) {
-        this->threads.emplace_back(std::bind(&ThreadPool<DependencyPolicy>::work, this));
+        this->threads.emplace_back(std::bind(&ThreadPool<Policies>::work, this));
         ++this->maxNumThreads;
     }
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::size_type ThreadPool<DependencyPolicy>::getNumberOfThreads() {
+template<class Policies>
+typename ThreadPool<Policies>::size_type ThreadPool<Policies>::getNumberOfThreads() {
     std::unique_lock<std::mutex> lock(this->instanceMutex);
     return this->maxNumThreads;
 }
 
 //Cleanup function joining threads that were stopped to reduce the thread
 //pool size. Returns the number of joined threads.
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::size_type ThreadPool<DependencyPolicy>::joinStoppedThreads() {
+template<class Policies>
+typename ThreadPool<Policies>::size_type ThreadPool<Policies>::joinStoppedThreads() {
     std::list<std::thread> threadList;
     std::vector<std::list<std::thread>::iterator> listItemsToRemove;
     listItemsToRemove.reserve(this->threads.size());
@@ -810,18 +811,18 @@ typename ThreadPool<DependencyPolicy>::size_type ThreadPool<DependencyPolicy>::j
     return threadList.size();
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::size_type ThreadPool<DependencyPolicy>::getNumTasksRunning() const {
+template<class Policies>
+typename ThreadPool<Policies>::size_type ThreadPool<Policies>::getNumTasksRunning() const {
     return this->numTasksRunning.load();
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::size_type ThreadPool<DependencyPolicy>::getNumTasks() const {
+template<class Policies>
+typename ThreadPool<Policies>::size_type ThreadPool<Policies>::getNumTasks() const {
     return this->numTasksTotal.load();
 }
 
-template<class DependencyPolicy>
-bool ThreadPool<DependencyPolicy>::empty() {
+template<class Policies>
+bool ThreadPool<Policies>::empty() {
     if(this->activeTasks.empty() and this->inactiveTasks.empty()) {
         std::unique_lock<std::mutex> lock(this->instanceMutex);
         return this->activeTasks.empty() and this->inactiveTasks.empty();
@@ -829,10 +830,10 @@ bool ThreadPool<DependencyPolicy>::empty() {
     return false;
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename Fn>
-auto ThreadPool<DependencyPolicy>::addTask(Fn task, std::set<typename ThreadPool<DependencyPolicy>::TaskID> const &dependencies)
-    -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn()>::type> {
+auto ThreadPool<Policies>::addTask(Fn task, std::set<typename ThreadPool<Policies>::TaskID> const &dependencies)
+    -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn()>::type> {
     typedef typename std::result_of<Fn()>::type ReturnType;
     std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
     auto future = std::move(packagedTask->get_future());
@@ -840,20 +841,20 @@ auto ThreadPool<DependencyPolicy>::addTask(Fn task, std::set<typename ThreadPool
         (*packagedTask)();
         delete packagedTask;
     }, &dependencies);
-    return ThreadPool<DependencyPolicy>::TaskHandle<ReturnType>{TaskID, std::move(future)};
+    return ThreadPool<Policies>::TaskHandle<ReturnType>{TaskID, std::move(future)};
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename Fn, typename ...Args>
-auto ThreadPool<DependencyPolicy>::addTask(Fn task, std::set<ThreadPool<DependencyPolicy>::TaskID> const &dependencies, Args...args)
-    -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
+auto ThreadPool<Policies>::addTask(Fn task, std::set<ThreadPool<Policies>::TaskID> const &dependencies, Args...args)
+    -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
     return this->addTask(std::bind(task, std::forward<Args>(args)...), dependencies);
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename Fn>
-auto ThreadPool<DependencyPolicy>::addTask(Fn task)
-    -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn()>::type> {
+auto ThreadPool<Policies>::addTask(Fn task)
+    -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn()>::type> {
     typedef typename std::result_of<Fn()>::type ReturnType;
     std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
     auto future = std::move(packagedTask->get_future());
@@ -861,13 +862,13 @@ auto ThreadPool<DependencyPolicy>::addTask(Fn task)
         (*packagedTask)();
         delete packagedTask;
     });
-    return ThreadPool<DependencyPolicy>::TaskHandle<ReturnType>{TaskID, std::move(future)};
+    return ThreadPool<Policies>::TaskHandle<ReturnType>{TaskID, std::move(future)};
 }
 
-template<class DependencyPolicy>
+template<class Policies>
 template<typename Fn, typename ...Args>
-auto ThreadPool<DependencyPolicy>::addTask(Fn task, Args...args)
-    -> ThreadPool<DependencyPolicy>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
+auto ThreadPool<Policies>::addTask(Fn task, Args...args)
+    -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
     return this->addTask(std::bind(task, std::forward<Args>(args)...));
 }
 
@@ -890,9 +891,9 @@ auto ThreadPool<DependencyPolicy>::addTask(Fn task, Args...args)
 * 6. If a task was selected, wait for it. Afterwards, goto 1.
 * 7. If no task was selected, return.
 */
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::wait() {
-    ThreadPool<DependencyPolicy>::TaskID lastTask;
+template<class Policies>
+void ThreadPool<Policies>::wait() {
+    ThreadPool<Policies>::TaskID lastTask;
     bool allQueuesEmpty = false;
     bool inactiveTasksEmpty = true;
     while(not allQueuesEmpty) {
@@ -900,16 +901,16 @@ void ThreadPool<DependencyPolicy>::wait() {
 #ifdef CONGESTION_ANALYSIS
             tryLockInstanceLock();
 #endif
-            std::unique_lock<std::mutex>(this->instanceMutex);
+            std::unique_lock<std::mutex> lock(this->instanceMutex);
             inactiveTasksEmpty = this->inactiveTasks.empty();
             allQueuesEmpty = inactiveTasksEmpty && this->activeTasks.empty();
         }
-        if(not inactiveTasksEmpty) {
+        if(Policies::activeWaiting and not inactiveTasksEmpty) {
             this->workOnce();
         } else if(not allQueuesEmpty) {
             TaskID lastTask;
             {
-                std::unique_lock<std::mutex>(this->instanceMutex);
+                std::unique_lock<std::mutex> lock(this->instanceMutex);
                 //instance mutex was unlocked in between, empty status could
                 // have changed, needs to be checked again
                 if(not this->activeTasks.empty()) {
@@ -946,8 +947,8 @@ void ThreadPool<DependencyPolicy>::wait() {
 *    OR the task definition was not removed and cannot be removed until the task definition
 *    mutex is held.
 */
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::wait(TaskID id) {
+template<class Policies>
+void ThreadPool<Policies>::wait(TaskID id) {
 #ifdef CONGESTION_ANALYSIS
         tryLockTaskDefLockShared();
 #endif
@@ -956,7 +957,7 @@ void ThreadPool<DependencyPolicy>::wait(TaskID id) {
 #else
     this->taskDefAccessMutex.lock();
 #endif
-    typename ThreadPool<DependencyPolicy>::TaskContainer::iterator task = this->getTaskDefinition(id, false);
+    typename ThreadPool<Policies>::TaskContainer::iterator task = this->getTaskDefinition(id, false);
     if(task == this->taskDefinitions.end()) {
 #ifndef THREADPOOL_STANDALONE
         this->taskDefAccessMutex.unlock_shared();
@@ -965,7 +966,12 @@ void ThreadPool<DependencyPolicy>::wait(TaskID id) {
 #endif
         return;
     }
-    std::shared_ptr<ThreadPool<DependencyPolicy>::Task> taskPtr = task->second;
+    std::shared_ptr<ThreadPool<Policies>::Task> taskPtr = task->second;
+#ifndef THREADPOOL_STANDALONE
+    this->taskDefAccessMutex.unlock_shared();
+#else
+    this->taskDefAccessMutex.unlock();
+#endif
     /*
      * In wait(), we simply used the calling thread to do some work to speed up
      * the work.  Here, this is not possible as using a thread which is not
@@ -975,23 +981,18 @@ void ThreadPool<DependencyPolicy>::wait(TaskID id) {
      * inside the same pool while waiting and tasks outside the pool simply
      * wait.
      */
-    if(not this->callingThreadBelongsToPool()) {
-        std::unique_lock<std::mutex> lock(taskPtr->objMutex);
-#ifndef THREADPOOL_STANDALONE
-        this->taskDefAccessMutex.unlock_shared();
-#else
-        this->taskDefAccessMutex.unlock();
-#endif
-        taskPtr->cv_done.wait(lock, [&]() -> bool { return taskPtr->done; });
-    } else {
-        while(not taskPtr->done) {
+    /*unsafe for now (workOnce could start working on an infinite task): if(Policies::activeWaiting) {
+        while([&]()->bool{ std::unique_lock<std::mutex> lock(taskPtr->objMutex); return not taskPtr->done; }()) {
             workOnce();
         }
+    } else*/ {
+        std::unique_lock<std::mutex> lock(taskPtr->objMutex);
+        taskPtr->cv_done.wait(lock, [&]() -> bool { return taskPtr->done; });
     }
 }
 
-template<class DependencyPolicy>
-void ThreadPool<DependencyPolicy>::waitOne() {
+template<class Policies>
+void ThreadPool<Policies>::waitOne() {
     if(this->getNumTasks() == 0) {
         return;
     }
@@ -1004,43 +1005,43 @@ void ThreadPool<DependencyPolicy>::waitOne() {
     }
 }
 
-template<class DependencyPolicy>
-bool ThreadPool<DependencyPolicy>::finished(TaskID id) {
+template<class Policies>
+bool ThreadPool<Policies>::finished(TaskID id) {
     return this->getTaskDefinition(id, true) == this->taskDefinitions.end();
 }
 
-template<class DependencyPolicy>
-typename ThreadPool<DependencyPolicy>::TaskPackagePtr ThreadPool<DependencyPolicy>::createTaskPackage() {
-    ThreadPool<DependencyPolicy>::TaskPackage *pkg = new ThreadPool<DependencyPolicy>::TaskPackage;
+template<class Policies>
+typename ThreadPool<Policies>::TaskPackagePtr ThreadPool<Policies>::createTaskPackage() {
+    ThreadPool<Policies>::TaskPackage *pkg = new ThreadPool<Policies>::TaskPackage;
     //TODO: Maybe use a weak ptr and initialise it from a private shared_ptr of the Pool?
     pkg->correspondingPool = this;
-    return std::shared_ptr<ThreadPool<DependencyPolicy>::TaskPackage>(pkg);
+    return std::shared_ptr<ThreadPool<Policies>::TaskPackage>(pkg);
 }
 
-template<typename DependencyPolicy>
-std::shared_ptr<std::map<std::thread::id, ThreadPool<DependencyPolicy>*>> ThreadPool<DependencyPolicy>::threadAssociation { new std::map<std::thread::id, ThreadPool<DependencyPolicy>*> };
-template<typename DependencyPolicy>
-std::unique_ptr<ThreadPool<DependencyPolicy>> ThreadPool<DependencyPolicy>::defaultInstancePtr = nullptr;
-template<typename DependencyPolicy>
-std::mutex ThreadPool<DependencyPolicy>::globalMutex;
+template<typename Policies>
+std::shared_ptr<std::map<std::thread::id, ThreadPool<Policies>*>> ThreadPool<Policies>::threadAssociation { new std::map<std::thread::id, ThreadPool<Policies>*> };
+template<typename Policies>
+std::unique_ptr<ThreadPool<Policies>> ThreadPool<Policies>::defaultInstancePtr = nullptr;
+template<typename Policies>
+std::mutex ThreadPool<Policies>::globalMutex;
 
 
-/*template<class Iterator, class R, class DependencyPolicy>
-std::tuple<typename ThreadPool<DependencyPolicy>::TaskPackagePtr, std::vector<typename ThreadPool<DependencyPolicy>::TaskHandle<typename R>>>
-distributeContainerOperationOnPool(ThreadPool<DependencyPolicy> &pool, Iterator begin, Iterator end, std::function<R(Iterator,Iterator)> fn) {
+/*template<class Iterator, class R, class Policies>
+std::tuple<typename ThreadPool<Policies>::TaskPackagePtr, std::vector<typename ThreadPool<Policies>::TaskHandle<typename R>>>
+distributeContainerOperationOnPool(ThreadPool<Policies> &pool, Iterator begin, Iterator end, std::function<R(Iterator,Iterator)> fn) {
   auto const poolsize = pool.getNumberOfThreads();
   auto const numElements = std::distance(begin, end);
   auto const numElementsPerThread = std::max(1, numElements/poolsize);
   Iterator intermediate = begin;
-  typename ThreadPool<DependencyPolicy>::TaskPackagePtr package = pool.createTaskPackage();
-  std::vector<typename ThreadPool<DependencyPolicy>::TaskHandle<R>> handles;
+  typename ThreadPool<Policies>::TaskPackagePtr package = pool.createTaskPackage();
+  std::vector<typename ThreadPool<Policies>::TaskHandle<R>> handles;
   for(unsigned int i = 0; i < (numElements/numElementsPerThread); ++i) {
     Iterator intermediateEnd = intermediate;
     std::advance(intermediateEnd, numElementsPerThread);
     handles.push_back(package->addTask(fn, intermediate, intermediateEnd));
   }
   handles.push_back(package->addTask(fn, intermediateEnd, end));
-  return std::make_tuple<typename ThreadPool<DependencyPolicy>::TaskPackagePtr, std::vector<typename ThreadPool<DependencyPolicy>::TaskHandle<R>>>(package, handles);
+  return std::make_tuple<typename ThreadPool<Policies>::TaskPackagePtr, std::vector<typename ThreadPool<Policies>::TaskHandle<R>>>(package, handles);
 }*/
 
 #endif /* __THREADPOOL_THREADPOOL_H__ */

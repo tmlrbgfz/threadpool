@@ -16,13 +16,13 @@
 #include <ratio>
 
 //Creates 2^limit tasks
-template<typename DependencyPolicy>
-unsigned char exponentialTaskRecursion(ThreadPool<DependencyPolicy> *ptr, std::atomic_ullong &var, unsigned char limit) {
+template<typename Policies>
+unsigned char exponentialTaskRecursion(ThreadPool<Policies> *ptr, std::atomic_ullong &var, unsigned char limit) {
     ++var;
     if(limit > 0) {
         limit -= 1;
-        ptr->addTask(std::bind(exponentialTaskRecursion<DependencyPolicy>, ptr, std::ref(var), limit));
-        ptr->addTask(std::bind(exponentialTaskRecursion<DependencyPolicy>, ptr, std::ref(var), limit));
+        ptr->addTask(std::bind(exponentialTaskRecursion<Policies>, ptr, std::ref(var), limit));
+        ptr->addTask(std::bind(exponentialTaskRecursion<Policies>, ptr, std::ref(var), limit));
     }
     return limit;
 }
@@ -31,8 +31,8 @@ unsigned char exponentialTaskRecursion(ThreadPool<DependencyPolicy> *ptr, std::a
 //Threads that are locked up somewhere will not be detected and thus would not contribute to the lower bound.
 //If there are more threads running than the thread pool size, this will be detected.
 //Precondition: pool is empty
-template<typename DependencyPolicy>
-unsigned long detectNumberOfWorkingThreadsLowerBound(ThreadPool<DependencyPolicy> &pool) {
+template<typename Policies>
+unsigned long detectNumberOfWorkingThreadsLowerBound(ThreadPool<Policies> &pool) {
   std::set<std::thread::id> threadIDs;
   std::mutex setMutex, runMutex;
   std::condition_variable runNotification;
@@ -69,8 +69,7 @@ unsigned long detectNumberOfWorkingThreadsLowerBound(ThreadPool<DependencyPolicy
 SCENARIO("ThreadPool basic tests") {
     GIVEN("A thread pool.") {
         unsigned int const numThreads = 10;
-        ThreadPool<policies::DependenciesRespected> pool(numThreads);
-
+        ThreadPool<policies::PolicyCollection<policies::DependenciesRespected, policies::PassiveWaiting>> pool(numThreads);
         WHEN("running threads inserting their threads ID in a set") {
           auto numThreadsDetected = detectNumberOfWorkingThreadsLowerBound(pool);
           THEN("the number of thread IDs in the set should be equal to the size of the thread pool") {
@@ -106,7 +105,7 @@ SCENARIO("ThreadPool basic tests") {
             std::atomic_ullong var;
             unsigned long limit = 15;
             var.store(0);
-            pool.addTask(std::bind(exponentialTaskRecursion<policies::DependenciesRespected>, &pool, std::ref(var), limit));
+            pool.addTask(std::bind(exponentialTaskRecursion<policies::PolicyCollection<policies::DependenciesRespected, policies::PassiveWaiting>>, &pool, std::ref(var), limit));
             pool.wait();
             THEN("the counter should be increased by the same amount of times") {
               REQUIRE(var.load() == static_cast<unsigned long long>((1.0 - std::pow(2, limit+1))/(1.0 - 2.0)));
@@ -131,7 +130,7 @@ SCENARIO("ThreadPool basic tests") {
 
 SCENARIO("ThreadPool dependency management tests") {
   GIVEN("A thread pool") {
-    auto &pool = ThreadPool<policies::DependenciesRespected>::getDefaultInstance();
+    auto &pool = ThreadPool<policies::PolicyCollection<policies::DependenciesRespected, policies::PassiveWaiting>>::getDefaultInstance();
     WHEN("running two functions, one depending on the other") {
       unsigned long var = 0;
       auto t1 = pool.addTask([&](){
@@ -147,7 +146,7 @@ SCENARIO("ThreadPool dependency management tests") {
         REQUIRE(var == 2);
       }
       AND_WHEN("running a third function, depending on both") {
-        std::set<ThreadPool<policies::DependenciesRespected>::TaskID> dependencies;
+        std::set<ThreadPool<policies::PolicyCollection<policies::DependenciesRespected, policies::PassiveWaiting>>::TaskID> dependencies;
         dependencies.insert(t1.TaskID);
         dependencies.insert(t2.TaskID);
         auto t3 = pool.addTask([&](){
@@ -164,8 +163,8 @@ SCENARIO("ThreadPool dependency management tests") {
 }
 
 SCENARIO("Thread pool size modification tests") {
-  GIVEN("A thread pool") {
-    ThreadPool<policies::DependenciesRespected> pool(1);
+  GIVEN("A thread pool with passive waiting") {
+    ThreadPool<policies::PolicyCollection<policies::DependenciesRespected, policies::PassiveWaiting>> pool(1);
     unsigned int numTasksToCreate = 12;
     WHEN("Adding tasks") {
       auto startTime = std::chrono::steady_clock::now();
@@ -200,6 +199,71 @@ SCENARIO("Thread pool size modification tests") {
           std::chrono::nanoseconds duration = endTime - startTime;
           REQUIRE(duration.count()/std::nano::den < numTasksToCreate/2);
           REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/3);
+        }
+      }
+      AND_WHEN("the thread pool size is increased to four") {
+        pool.setNumberOfThreads(4);
+        THEN("the time needed should be one fourth the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den < numTasksToCreate/3);
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/4);
+        }
+        AND_WHEN("reducing the number of threads to one again after one second") {
+          sleep(1);
+          pool.setNumberOfThreads(1);
+          THEN("The number of joinable threads should be three") {
+            sleep(1);
+            REQUIRE(pool.joinStoppedThreads() == 3);
+            AND_THEN("The time needed should be between two thirds and one third the number of tasks in seconds") {
+              pool.wait();
+              auto endTime = std::chrono::steady_clock::now();
+              std::chrono::nanoseconds duration = endTime - startTime;
+              REQUIRE(duration.count()/std::nano::den <= (numTasksToCreate - numTasksToCreate/3 + 1));
+              REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/3);
+            }
+          }
+        }
+      }
+    }
+  }
+  GIVEN("A thread pool with active waiting") {
+    ThreadPool<policies::PolicyCollection<policies::DependenciesRespected, policies::ActiveWaiting>> pool(1);
+    unsigned int numTasksToCreate = 12;
+    WHEN("Adding tasks") {
+      auto startTime = std::chrono::steady_clock::now();
+      for(unsigned int i = 0; i < numTasksToCreate; ++i) {
+        pool.addTask([&](){
+          sleep(1);
+        });
+      }
+      AND_WHEN("the thread pool has one thread") {
+        THEN("the time needed should be the half the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate / 2);
+        }
+      }
+      AND_WHEN("the thread pool size is increased to two") {
+        pool.setNumberOfThreads(2);
+        THEN("the time needed should be a third the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den < numTasksToCreate/2);
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/3);
+        }
+      }
+      AND_WHEN("the thread pool size is increased to three") {
+        pool.setNumberOfThreads(3);
+        THEN("the time needed should be one fourth the number of tasks in seconds") {
+          pool.wait();
+          auto endTime = std::chrono::steady_clock::now();
+          std::chrono::nanoseconds duration = endTime - startTime;
+          REQUIRE(duration.count()/std::nano::den < numTasksToCreate/3);
+          REQUIRE(duration.count()/std::nano::den >= numTasksToCreate/4);
         }
       }
       AND_WHEN("the thread pool size is increased to four") {

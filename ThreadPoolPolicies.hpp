@@ -32,6 +32,16 @@ namespace policies {
     typedef struct DependenciesNotRespected_t {
         static constexpr bool respectDependencies = false;
     } DependenciesNotRespected;
+    typedef struct ActiveWaiting_t {
+        static constexpr bool activeWaiting = true;
+    } ActiveWaiting;
+    typedef struct PassiveWaiting_t {
+        static constexpr bool activeWaiting = false;
+    } PassiveWaiting;
+
+    template<class... Policies>
+    class PolicyCollection : public Policies... {
+    };
 }
 
 #endif //__THREADPOOL_POLICIES_H__
