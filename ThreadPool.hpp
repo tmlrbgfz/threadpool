@@ -50,7 +50,7 @@
 #include <optional>
 #include <shared_mutex>
 #ifdef THREADPOOL_USE_GSL
-#include <gsl/gsl_assert>
+#include <gsl/assert>
 #else
 #define GSL_LIKELY(x) (!!(x))
 #define Expects(x) static_cast<void>(0)
