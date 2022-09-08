@@ -128,55 +128,7 @@ public:
 
 private:
     template<typename T, typename Enable = void>
-    struct TaskStruct {
-    	TaskDefinition fn;
-    	std::mutex objMutex;
-    	std::condition_variable cv_done;
-    	bool done;
-
-        ~TaskStruct() {
-            std::unique_lock<std::mutex> lock(this->objMutex);
-        }
-
-        void addDependant(TaskID) {}
-        void setNumberOfDependencies(unsigned long) {}
-        unsigned long getNumberOfDependencies() {
-            return 0;
-        }
-        std::vector<TaskID> getDependants() const { return {}; }
-    };
-
-    template<typename T>
-    struct TaskStruct<T, typename std::enable_if<T::respectDependencies>::type> {
-    	TaskDefinition fn;
-    	std::atomic_ulong dependencyCount;
-    	std::vector<TaskID> dependants;
-    	std::mutex objMutex;
-    	std::condition_variable cv_done;
-    	bool done;
-
-        ~TaskStruct() {
-            std::unique_lock<std::mutex> lock(this->objMutex);
-        }
-
-        void addDependant(TaskID id) {
-            this->dependants.push_back(id);
-        }
-        void setNumberOfDependencies(unsigned long n) {
-            this->dependencyCount = n;
-        }
-        unsigned long getNumberOfDependencies() {
-            return this->dependencyCount.load();
-        }
-        std::vector<TaskID> getDependants() const { return dependants; }
-    };
-    /*template<typename T>
-    struct TaskStruct<typename T, typename std::enable_if<!T::respectDependencies>::type> {
-    	TaskDefinition fn;
-    	std::mutex objMutex;
-    	std::condition_variable cv_done;
-    	bool done;
-    };*/
+    struct TaskStruct;
 
     typedef TaskStruct<Policies> Task;
 private:
@@ -315,6 +267,51 @@ public:
     TaskPackagePtr createTaskPackage();
 };
 
+template<typename Policies>
+template<typename T, typename Enable>
+struct ThreadPool<Policies>::TaskStruct {
+    TaskDefinition fn;
+    std::mutex objMutex;
+    std::condition_variable cv_done;
+    bool done;
+
+    ~TaskStruct() {
+        std::unique_lock<std::mutex> lock(this->objMutex);
+    }
+
+    void addDependant(TaskID) {}
+    void setNumberOfDependencies(unsigned long) {}
+    unsigned long getNumberOfDependencies() {
+        return 0;
+    }
+    std::vector<TaskID> getDependants() const { return {}; }
+};
+
+template<typename Policies>
+template<typename T>
+struct ThreadPool<Policies>::TaskStruct<T, typename std::enable_if_t<T::respectDependencies>> {
+    TaskDefinition fn;
+    std::atomic_ulong dependencyCount;
+    std::vector<TaskID> dependants;
+    std::mutex objMutex;
+    std::condition_variable cv_done;
+    bool done;
+
+    ~TaskStruct() {
+        std::unique_lock<std::mutex> lock(this->objMutex);
+    }
+
+    void addDependant(TaskID id) {
+        this->dependants.push_back(id);
+    }
+    void setNumberOfDependencies(unsigned long n) {
+        this->dependencyCount = n;
+    }
+    unsigned long getNumberOfDependencies() {
+        return this->dependencyCount.load();
+    }
+    std::vector<TaskID> getDependants() const { return dependants; }
+};
 
 template<class Policies>
 ThreadPool<Policies>::TaskPackage::TaskPackage() : correspondingPool(0) {
