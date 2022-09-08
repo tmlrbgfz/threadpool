@@ -48,10 +48,7 @@
 #include <functional>
 #include <algorithm>
 #include <optional>
-#ifndef THREADPOOL_STANDALONE
-#include <boost/thread/shared_mutex.hpp>
-#include <boost/thread/shared_lock_guard.hpp>
-#endif
+#include <shared_mutex>
 #ifdef THREADPOOL_USE_GSL
 #include <gsl/gsl_assert>
 #else
@@ -205,11 +202,7 @@ private:
     TaskList activeTasks;
     std::map<std::thread::id, typename TaskContainer::iterator> threadWork;
     TaskContainer taskDefinitions;
-#ifndef THREADPOOL_STANDALONE
-    boost::shared_mutex taskDefAccessMutex;
-#else
-    std::mutex taskDefAccessMutex;
-#endif
+    std::shared_mutex taskDefAccessMutex;
     bool stop;
     unsigned int numThreadsToStop;
     std::vector<std::thread::id> joinableThreads;
@@ -446,11 +439,7 @@ void ThreadPool<Policies>::addDependencies(ThreadPool<Policies>::Task *task, Thr
     #ifdef CONGESTION_ANALYSIS
             tryLockTaskDefLockShared();
     #endif
-#ifndef THREADPOOL_STANDALONE
-        boost::shared_lock_guard<boost::shared_mutex> tskDefLock(this->taskDefAccessMutex);
-#else
-        std::lock_guard<std::mutex> tskDefLock(this->taskDefAccessMutex);
-#endif
+        std::shared_lock<std::shared_mutex> tskDefLock(this->taskDefAccessMutex);
         for(const ThreadPool<Policies>::TaskID dep : *dependencies) {
             typename ThreadPool<Policies>::TaskContainer::iterator dependency = this->getTaskDefinition(dep, false);
             if(dependency != this->taskDefinitions.end()) {
@@ -575,11 +564,7 @@ typename ThreadPool<Policies>::TaskContainer::iterator ThreadPool<Policies>::get
         tryLockTaskDefLockShared();
 #endif
         //NOTE: Replace with std::shared_lock as soon as C++17 is state-of-the-art
-#ifndef THREADPOOL_STANDALONE
-        boost::shared_lock_guard<boost::shared_mutex> lock(this->taskDefAccessMutex);
-#else
-        std::lock_guard<std::mutex> lock(this->taskDefAccessMutex);
-#endif
+        std::shared_lock<std::shared_mutex> lock(this->taskDefAccessMutex);
         result = this->taskDefinitions.find(id);
     } else {
         result = this->taskDefinitions.find(id);
@@ -952,26 +937,14 @@ void ThreadPool<Policies>::wait(TaskID id) {
 #ifdef CONGESTION_ANALYSIS
         tryLockTaskDefLockShared();
 #endif
-#ifndef THREADPOOL_STANDALONE
     this->taskDefAccessMutex.lock_shared();
-#else
-    this->taskDefAccessMutex.lock();
-#endif
     typename ThreadPool<Policies>::TaskContainer::iterator task = this->getTaskDefinition(id, false);
     if(task == this->taskDefinitions.end()) {
-#ifndef THREADPOOL_STANDALONE
         this->taskDefAccessMutex.unlock_shared();
-#else
-        this->taskDefAccessMutex.unlock();
-#endif
         return;
     }
     std::shared_ptr<ThreadPool<Policies>::Task> taskPtr = task->second;
-#ifndef THREADPOOL_STANDALONE
     this->taskDefAccessMutex.unlock_shared();
-#else
-    this->taskDefAccessMutex.unlock();
-#endif
     /*
      * In wait(), we simply used the calling thread to do some work to speed up
      * the work.  Here, this is not possible as using a thread which is not
