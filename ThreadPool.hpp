@@ -110,11 +110,11 @@ public:
         TaskPackage();
     public:
         template<typename T, typename ...Args>
-        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args);
+        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args&&...args);
         template<typename T, typename ...Args>
-        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args);
+        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args&&...args);
         template<typename T, typename ...Args>
-        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args...args);
+        typename ThreadPool<Policies>::template TaskHandle<T> addTask(std::function<T(Args...)> &&task, Args&&...args);
         //Returns true if the tasks which were in this package when calling this function
         //  are all finished. There might be further tasks which were added while this
         //  function was executed
@@ -210,11 +210,11 @@ public:
     template<typename Fn>
     auto addTask(Fn task, std::set<TaskID> const &dependencies) -> ThreadPool::TaskHandle<typename std::result_of<Fn()>::type>;
     template<typename Fn, typename ...Args>
-    auto addTask(Fn task, std::set<TaskID> const &dependencies, Args...args) -> ThreadPool::TaskHandle<typename std::result_of<Fn(Args...)>::type>;
+    auto addTask(Fn task, std::set<TaskID> const &dependencies, Args&&...args) -> ThreadPool::TaskHandle<typename std::result_of<Fn(Args...)>::type>;
     template<typename Fn>
     auto addTask(Fn task) -> ThreadPool::TaskHandle<typename std::result_of<Fn()>::type>;
     template<typename Fn, typename ...Args>
-    auto addTask(Fn task, Args...args) -> ThreadPool::TaskHandle<typename std::result_of<Fn(Args...)>::type>;
+    auto addTask(Fn task, Args&&...args) -> ThreadPool::TaskHandle<typename std::result_of<Fn(Args...)>::type>;
 
 
     /*
@@ -319,7 +319,7 @@ ThreadPool<Policies>::TaskPackage::TaskPackage() : correspondingPool(0) {
 
 template<class Policies>
 template<typename T, typename ...Args>
-typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args...args) {
+typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, const std::set<TaskID> &dependencies, Args&&...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependencies);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -328,7 +328,7 @@ typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::Task
 
 template<class Policies>
 template<typename T, typename ...Args>
-typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args...args) {
+typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, const TaskID dependency, Args&&...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)..., dependency);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -337,7 +337,7 @@ typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::Task
 
 template<class Policies>
 template<typename T, typename ...Args>
-typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args...args) {
+typename ThreadPool<Policies>::template TaskHandle<T> ThreadPool<Policies>::TaskPackage::addTask(std::function<T(Args...)> &&task, Args&&...args) {
     auto taskHandle = correspondingPool->addTask(std::move(task), std::forward<Args>(args)...);
     std::unique_lock<std::mutex> lock(this->mutex);
     this->tasks.push_back(taskHandle.TaskID);
@@ -828,7 +828,7 @@ auto ThreadPool<Policies>::addTask(Fn task, std::set<typename ThreadPool<Policie
 
 template<class Policies>
 template<typename Fn, typename ...Args>
-auto ThreadPool<Policies>::addTask(Fn task, std::set<ThreadPool<Policies>::TaskID> const &dependencies, Args...args)
+auto ThreadPool<Policies>::addTask(Fn task, std::set<ThreadPool<Policies>::TaskID> const &dependencies, Args&&...args)
     -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
     return this->addTask(std::bind(task, std::forward<Args>(args)...), dependencies);
 }
@@ -849,7 +849,7 @@ auto ThreadPool<Policies>::addTask(Fn task)
 
 template<class Policies>
 template<typename Fn, typename ...Args>
-auto ThreadPool<Policies>::addTask(Fn task, Args...args)
+auto ThreadPool<Policies>::addTask(Fn task, Args&&...args)
     -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn(Args...)>::type> {
     return this->addTask(std::bind(task, std::forward<Args>(args)...));
 }
