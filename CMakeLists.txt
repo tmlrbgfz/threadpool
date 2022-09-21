@@ -14,6 +14,7 @@ target_sources(threadpool
         ThreadPool.hpp
         ThreadPoolPolicies.hpp)
 
-add_executable(tests ThreadPoolTest.cpp)
-enable_testing()
-add_test(NAME ThreadPoolTest COMMAND tests)
+if(PROJECT_IS_TOP_LEVEL)
+  add_executable(tests ThreadPoolTest.cpp)
+  add_test(NAME ThreadPoolTest COMMAND tests)
+endif()
