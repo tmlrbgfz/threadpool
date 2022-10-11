@@ -156,7 +156,7 @@ private:
     TaskContainer taskDefinitions;
     std::shared_mutex taskDefAccessMutex;
     bool stop;
-    unsigned int numThreadsToStop;
+    unsigned long numThreadsToStop;
     std::vector<std::thread::id> joinableThreads;
     size_type maxNumThreads;
 
@@ -493,7 +493,7 @@ void ThreadPool<Policies>::work(void) {
     this->joinableThreads.push_back(threadID);
     this->threadWork.erase(threadID);
     if(poolAssociation.expired() == false) {
-        std::unique_lock<std::mutex> lock(ThreadPool<Policies>::globalMutex);
+        std::unique_lock<std::mutex> lock_global(ThreadPool<Policies>::globalMutex);
         poolAssociation.lock()->erase(threadID);
     }
 }
@@ -690,7 +690,7 @@ bool ThreadPool<Policies>::callingThreadBelongsToPool() const {
 }
 
 template<class Policies>
-ThreadPool<Policies>::ThreadPool() : ThreadPool(std::thread::hardware_concurrency() - 1) {
+ThreadPool<Policies>::ThreadPool() : ThreadPool(/*std::thread::hardware_concurrency() -*/ 1) {
 }
 
 template<class Policies>
@@ -837,7 +837,7 @@ template<class Policies>
 template<typename Fn>
 auto ThreadPool<Policies>::addTask(Fn task)
     -> ThreadPool<Policies>::TaskHandle<typename std::result_of<Fn()>::type> {
-    typedef typename std::result_of<Fn()>::type ReturnType;
+    typedef typename std::invoke_result<Fn>::type ReturnType;
     std::packaged_task<ReturnType()> *packagedTask = new std::packaged_task<ReturnType()>(task);
     auto future = std::move(packagedTask->get_future());
     auto TaskID = this->addTaskDetail([packagedTask]()->void{
@@ -875,7 +875,7 @@ auto ThreadPool<Policies>::addTask(Fn task, Args&&...args)
 */
 template<class Policies>
 void ThreadPool<Policies>::wait() {
-    ThreadPool<Policies>::TaskID lastTask;
+    //ThreadPool<Policies>::TaskID lastTask;
     bool allQueuesEmpty = false;
     bool inactiveTasksEmpty = true;
     while(not allQueuesEmpty) {
@@ -888,7 +888,7 @@ void ThreadPool<Policies>::wait() {
             allQueuesEmpty = inactiveTasksEmpty && this->activeTasks.empty();
         }
         if(Policies::activeWaiting and not inactiveTasksEmpty) {
-            this->workOnce();
+            this->workOnce(); //TODO: Is this at risk to block if inactiveTasksEmpty would become true in the meantime?
         } else if(not allQueuesEmpty) {
             TaskID lastTask;
             {
