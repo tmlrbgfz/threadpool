@@ -689,7 +689,7 @@ bool ThreadPool<Policies>::callingThreadBelongsToPool() const {
 }
 
 template<class Policies>
-ThreadPool<Policies>::ThreadPool() : ThreadPool(/*std::thread::hardware_concurrency() -*/ 1) {
+ThreadPool<Policies>::ThreadPool() : ThreadPool(std::thread::hardware_concurrency() - 1) {
 }
 
 template<class Policies>
